@@ -6,9 +6,9 @@ Just migrates subscriptions from Server to Cloud with user mapping.
 from tableau_migration import (
     Migrator,
     MigrationPlanBuilder,
-    TableauCloudUsernameMappingBase,
-    ContentLocation
+    PyUser
 )
+from tableau_migration.migration_engine_hooks_mappings import PyContentMappingContext
 
 
 # =============================================================================
@@ -42,10 +42,10 @@ DEFAULT_DOMAIN = "@company.com"
 # USERNAME MAPPING CLASS
 # =============================================================================
 
-class SimpleUsernameMapping(TableauCloudUsernameMappingBase):
+class SimpleUsernameMapping:
     """Maps Server usernames to Cloud emails."""
 
-    def map(self, ctx):
+    def map(self, ctx: PyContentMappingContext[PyUser]) -> PyContentMappingContext[PyUser]:
         """
         Called for each user during migration.
 
@@ -55,7 +55,8 @@ class SimpleUsernameMapping(TableauCloudUsernameMappingBase):
         Returns:
             Mapped context with new username (email)
         """
-        username = ctx.content_item.name
+        user = ctx.content_item
+        username = user.name
 
         # Already an email? Return as-is
         if "@" in username:
@@ -65,14 +66,14 @@ class SimpleUsernameMapping(TableauCloudUsernameMappingBase):
         if username in globals()['USER_MAPPINGS']:
             email = globals()['USER_MAPPINGS'][username]
             print(f"👤 Mapping: {username} → {email}")
-            # For TableauCloudUsernameMappingBase, just map to new email
-            return ctx.map_to(email)
+            # Use location.with_username() to create new location
+            return ctx.map_to(user.location.with_username(email))
 
         # Default: append domain (access global)
         email = f"{username}{globals()['DEFAULT_DOMAIN']}"
         print(f"👤 Default: {username} → {email}")
-        # For TableauCloudUsernameMappingBase, just map to new email
-        return ctx.map_to(email)
+        # Use location.with_username() to create new location
+        return ctx.map_to(user.location.with_username(email))
 
 
 # =============================================================================
@@ -108,8 +109,10 @@ def migrate_subscriptions():
         )
         .for_server_to_cloud()
         .with_tableau_id_authentication_type()
-        .with_tableau_cloud_usernames(SimpleUsernameMapping)
     )
+
+    # Register username mapping
+    plan_builder.mappings.add(SimpleUsernameMapping())
 
     # Build and execute
     print("Building migration plan...")
