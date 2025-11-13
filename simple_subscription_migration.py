@@ -112,7 +112,7 @@ def migrate_subscriptions():
     )
 
     # Register username mapping for IUser content type
-    plan_builder.mappings.add(SimpleUsernameMapping, IUser)
+    plan_builder.mappings.add(SimpleUsernameMapping(), IUser)
 
     # Build and execute
     print("Building migration plan...")
