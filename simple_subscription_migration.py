@@ -1,12 +1,12 @@
 """
 Simple Subscription Migration - Single File
-Based on actual Tableau Migration SDK Python example.
+Just migrates subscriptions from Server to Cloud with user mapping.
 """
 
-import asyncio
 from tableau_migration import (
     Migrator,
-    MigrationPlanBuilder
+    MigrationPlanBuilder,
+    TableauCloudUsernameMappingBase
 )
 
 
@@ -41,33 +41,35 @@ EMAIL_DOMAIN = "@company.com"
 # USERNAME MAPPING CLASS
 # =============================================================================
 
-class SimpleUsernameMapping:
+class SimpleUsernameMapping(TableauCloudUsernameMappingBase):
     """Maps Server usernames to Cloud emails."""
 
-    def __call__(self, username: str) -> str:
+    def map(self, ctx):
         """
-        Called for each username during migration.
+        Called for each user during migration.
 
         Args:
-            username: The Server username
+            ctx: The mapping context containing the user
 
         Returns:
-            The Cloud email address
+            Mapped context with new username (email)
         """
+        username = ctx.content_item.name
+
         # Already an email? Return as-is
         if "@" in username:
-            return username
+            return ctx
 
         # Check mapping dict
         if username in USER_MAPPINGS:
             email = USER_MAPPINGS[username]
             print(f"👤 Mapping: {username} → {email}")
-            return email
+            return ctx.map_to(email)
 
         # Default: append domain
         email = f"{username}{EMAIL_DOMAIN}"
         print(f"👤 Default: {username} → {email}")
-        return email
+        return ctx.map_to(email)
 
 
 # =============================================================================
@@ -103,7 +105,7 @@ def migrate_subscriptions():
         )
         .for_server_to_cloud()
         .with_tableau_id_authentication_type()
-        .with_tableau_cloud_usernames(SimpleUsernameMapping)  # Pass class, not instance
+        .with_tableau_cloud_usernames(SimpleUsernameMapping)
     )
 
     # Build and execute
