@@ -15,22 +15,22 @@ from tableau_migration import (
     IProject
 )
 
-# Configure logging to reduce verbose SDK output - be very aggressive
+# Configure logging - show subscription progress but suppress verbose HTTP/retry logs
 logging.basicConfig(
-    level=logging.CRITICAL,  # Only show CRITICAL errors
+    level=logging.INFO,  # Allow INFO messages through
     format='%(message)s'
 )
 
-# Silence all the verbose .NET SDK loggers completely
+# Silence the noisy loggers (HTTP requests, retries, etc.) but keep migration engine visible
 logging.getLogger('System.Net.Http.HttpClient.DefaultHttpClient.LogicalHandler').setLevel(logging.CRITICAL)
 logging.getLogger('System.Net.Http.HttpClient.DefaultHttpClient.ClientHandler').setLevel(logging.CRITICAL)
 logging.getLogger('Tableau.Migration.Net.Logging.HttpActivityLogger').setLevel(logging.CRITICAL)
 logging.getLogger('Tableau.Migration.Engine.Conversion.Schedules.ServerToCloudScheduleConverter').setLevel(logging.CRITICAL)
 logging.getLogger('Tableau.Migration.Engine.Hooks.Transformers').setLevel(logging.CRITICAL)
-logging.getLogger('Tableau.Migration.Engine').setLevel(logging.CRITICAL)
 logging.getLogger('Polly').setLevel(logging.CRITICAL)
 logging.getLogger('System.Net.Http.HttpClient').setLevel(logging.CRITICAL)
-logging.getLogger('Tableau.Migration').setLevel(logging.CRITICAL)
+# Keep Tableau.Migration.Engine at INFO to see subscription creation messages
+logging.getLogger('Tableau.Migration.Engine').setLevel(logging.INFO)
 
 
 # =============================================================================
