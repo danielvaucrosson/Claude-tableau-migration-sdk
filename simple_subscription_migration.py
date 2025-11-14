@@ -41,17 +41,18 @@ class SimpleUsernameMapping(TableauCloudUsernameMappingBase):
 
     def map(self, ctx):
         username = ctx.content_item.name
+        _tableau_user_domain = ctx.mapped_location.parent()
 
         # Already an email? Return as-is
         if "@" in username:
-            return ctx
+            return ctx.map_to(_tableau_user_domain.append(username))
 
         # Append @keyrus.com
         email = f"{username}@keyrus.com"
         print(f"👤 Mapping: {username} → {email}")
 
-        # Return the mapped context - let the base class handle it
-        return ctx.map_to(email)
+        # Return the mapped context with proper location object
+        return ctx.map_to(_tableau_user_domain.append(email))
 
 
 # =============================================================================
