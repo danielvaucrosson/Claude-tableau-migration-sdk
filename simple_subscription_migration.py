@@ -1,12 +1,16 @@
 """
 Simple Subscription Migration - Single File
-Migrates subscriptions from Server to Cloud with simple username mapping.
+ONLY migrates subscriptions - skips users and workbooks (assumes they exist in Cloud).
 """
 
 from tableau_migration import (
     Migrator,
     MigrationPlanBuilder,
-    TableauCloudUsernameMappingBase
+    TableauCloudUsernameMappingBase,
+    IUser,
+    IWorkbook,
+    IDataSource,
+    IProject
 )
 
 
@@ -28,11 +32,11 @@ DEST_TOKEN = "your-cloud-token-secret"
 
 
 # =============================================================================
-# USERNAME MAPPING - Just append @keyrus.com
+# USERNAME MAPPING - Just append @keyrus.com to find matching Cloud users
 # =============================================================================
 
 class SimpleUsernameMapping(TableauCloudUsernameMappingBase):
-    """Append @keyrus.com to Server usernames."""
+    """Append @keyrus.com to Server usernames to match Cloud users."""
 
     def map(self, ctx):
         username = ctx.content_item.name
@@ -47,6 +51,42 @@ class SimpleUsernameMapping(TableauCloudUsernameMappingBase):
 
         # Return the mapped context - let the base class handle it
         return ctx.map_to(email)
+
+
+# =============================================================================
+# FILTERS - Control what content actually gets migrated
+# =============================================================================
+
+class SkipUserMigration:
+    """Don't migrate users - they should already exist in Cloud."""
+
+    def should_migrate(self, ctx):
+        print(f"⏭️  Skipping user: {ctx.item.name}")
+        return False  # Don't migrate users
+
+
+class SkipProjectMigration:
+    """Don't migrate projects - they should already exist in Cloud."""
+
+    def should_migrate(self, ctx):
+        print(f"⏭️  Skipping project: {ctx.item.name}")
+        return False  # Don't migrate projects
+
+
+class SkipDataSourceMigration:
+    """Don't migrate data sources - they should already exist in Cloud."""
+
+    def should_migrate(self, ctx):
+        print(f"⏭️  Skipping data source: {ctx.item.name}")
+        return False  # Don't migrate data sources
+
+
+class SkipWorkbookMigration:
+    """Don't migrate workbooks - they should already exist in Cloud."""
+
+    def should_migrate(self, ctx):
+        print(f"⏭️  Skipping workbook: {ctx.item.name}")
+        return False  # Don't migrate workbooks
 
 
 # =============================================================================
@@ -84,6 +124,14 @@ def migrate_subscriptions():
         .with_tableau_id_authentication_type()
         .with_tableau_cloud_usernames(lambda ctx: SimpleUsernameMapping().map(ctx))
     )
+
+    # Add filters to skip migrating users, projects, data sources, and workbooks
+    # Only subscriptions will be migrated
+    print("Configuring filters to skip user/workbook migration...")
+    plan_builder.filters.add(SkipUserMigration, IUser)
+    plan_builder.filters.add(SkipProjectMigration, IProject)
+    plan_builder.filters.add(SkipDataSourceMigration, IDataSource)
+    plan_builder.filters.add(SkipWorkbookMigration, IWorkbook)
 
     # Build and execute
     print("Building migration plan...")
