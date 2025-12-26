@@ -1,5 +1,24 @@
 # Tableau Migration Setup Instructions
 
+## What Gets Migrated
+
+This script migrates **ONLY**:
+- ✅ **Data Sources**
+- ✅ **Workbooks**
+
+This script **DOES NOT** migrate:
+- ❌ Users
+- ❌ Groups
+- ❌ Projects
+- ❌ Subscriptions
+
+## Prerequisites
+
+Before running this migration:
+1. **Users must already exist** in your Tableau Cloud site
+2. **Projects must already exist** in your Tableau Cloud site
+3. You need a **default content owner** (a Cloud user email) who will own content when the original owner doesn't exist
+
 ## Quick Start
 
 ### 1. Create your configuration file
@@ -25,7 +44,8 @@ Open `config.json` and replace the placeholder values:
     "site_content_url": "your-actual-site-name",
     "access_token_name": "your-cloud-token-name",
     "access_token": "your-cloud-token-secret"
-  }
+  },
+  "default_content_owner": "admin@yourcompany.com"
 }
 ```
 
@@ -33,6 +53,7 @@ Open `config.json` and replace the placeholder values:
 - `site_content_url` for source: Use `""` (empty string) for default site, or `"site-name"` for named sites
 - `pod_url` for destination: Update the pod (10ax, 10ay, 10az, etc.) based on your Tableau Cloud instance
 - `site_content_url` for destination: Your Tableau Cloud site name (NOT the full URL)
+- `default_content_owner`: Email of a Cloud user who will own content when the original owner doesn't exist in Cloud
 
 ### 3. Verify your Tableau Cloud token
 

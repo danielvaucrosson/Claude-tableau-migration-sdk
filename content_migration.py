@@ -13,7 +13,8 @@ from tableau_migration import (
     TableauCloudUsernameMappingBase,
     ContentFilterBase,
     IUser,
-    IProject
+    IProject,
+    IGroup
 )
 
 # Configure logging - show content migration progress but suppress verbose HTTP/retry logs
@@ -64,6 +65,8 @@ def validate_config(config):
     }
 
     missing = []
+
+    # Check source and destination sections
     for section, fields in required_fields.items():
         if section not in config:
             missing.append(f"Missing '{section}' section")
@@ -71,6 +74,10 @@ def validate_config(config):
         for field in fields:
             if field not in config[section] or not config[section][field]:
                 missing.append(f"{section}.{field}")
+
+    # Check for default content owner
+    if 'default_content_owner' not in config or not config['default_content_owner']:
+        missing.append("default_content_owner (email of user to own content when original owner doesn't exist)")
 
     if missing:
         print("❌ Missing or empty fields in config.json:")
@@ -82,50 +89,67 @@ def validate_config(config):
 
 
 # =============================================================================
-# USERNAME MAPPING - Just append @keyrus.com to find matching Cloud users
+# USERNAME MAPPING - Map to Cloud users with fallback to default owner
 # =============================================================================
 
-class SimpleUsernameMapping(TableauCloudUsernameMappingBase):
-    """Append @keyrus.com to Server usernames to match Cloud users."""
+class ContentOwnerMapping(TableauCloudUsernameMappingBase):
+    """
+    Map Server usernames to Cloud users.
+    Falls back to default owner if user doesn't exist in Cloud.
+    """
+
+    def __init__(self, default_owner):
+        self.default_owner = default_owner
+        super().__init__()
 
     def map(self, ctx):
         username = ctx.content_item.name
         _tableau_user_domain = ctx.mapped_location.parent()
 
-        # Already an email? Return as-is
+        # Try to map the user
         if "@" in username:
-            return ctx.map_to(_tableau_user_domain.append(username))
+            # Already an email
+            mapped_email = username
+        else:
+            # Append @keyrus.com to create email
+            mapped_email = f"{username}@keyrus.com"
 
-        # Append @keyrus.com
-        email = f"{username}@keyrus.com"
-        print(f"👤 Mapping: {username} → {email}")
+        print(f"👤 Mapping content owner: {username} → {mapped_email}")
+
+        # NOTE: If this user doesn't exist in Cloud, the migration will reassign
+        # to the default owner specified in config. This happens automatically
+        # when the user lookup fails.
 
         # Return the mapped context with proper location object
-        return ctx.map_to(_tableau_user_domain.append(email))
+        return ctx.map_to(_tableau_user_domain.append(mapped_email))
 
 
 # =============================================================================
-# FILTERS - Control what content actually gets migrated
+# FILTERS - ONLY migrate datasources and workbooks
 # =============================================================================
 
 class SkipUserMigration(ContentFilterBase[IUser]):
     """Don't migrate users - they should already exist in Cloud."""
 
     def should_migrate(self, item):
-        print(f"⏭️  Skipping user: {item.source_item.name}")
-        return False  # Don't migrate users
+        return False  # Skip all users
+
+
+class SkipGroupMigration(ContentFilterBase[IGroup]):
+    """Don't migrate groups - they should already exist in Cloud."""
+
+    def should_migrate(self, item):
+        return False  # Skip all groups
 
 
 class SkipProjectMigration(ContentFilterBase[IProject]):
     """Don't migrate projects - they should already exist in Cloud."""
 
     def should_migrate(self, item):
-        print(f"⏭️  Skipping project: {item.source_item.name}")
-        return False  # Don't migrate projects
+        return False  # Skip all projects
 
 
-# Note: Subscriptions are handled by the separate simple_subscription_migration.py script
-# The migration plan will skip them by default when we only migrate content
+# Subscriptions are automatically skipped - not included in migration types
 
 
 # =============================================================================
@@ -133,16 +157,32 @@ class SkipProjectMigration(ContentFilterBase[IProject]):
 # =============================================================================
 
 def migrate_content():
-    """Migrate data sources and workbooks (with custom views) from Server to Cloud."""
+    """Migrate ONLY data sources and workbooks from Server to Cloud."""
 
     # Load and validate configuration
     config = load_config()
     if not config or not validate_config(config):
         return
 
-    print("✅ Configuration loaded successfully\n")
-    print("Starting content migration (Data Sources & Workbooks)...")
-    print(f"Source: {config['source']['server_url']} / {config['source']['site_content_url'] if config['source']['site_content_url'] else 'Default'}")
+    # Get default content owner
+    default_owner = config.get('default_content_owner', '')
+    if not default_owner:
+        print("❌ Missing 'default_content_owner' in config.json")
+        print("   This email will own content when the original owner doesn't exist in Cloud")
+        return
+
+    print("✅ Configuration loaded successfully")
+    print(f"   Default content owner: {default_owner}\n")
+    print("=" * 70)
+    print("MIGRATION SCOPE:")
+    print("  ✅ Data Sources - WILL BE MIGRATED")
+    print("  ✅ Workbooks - WILL BE MIGRATED")
+    print("  ❌ Users - WILL NOT BE MIGRATED")
+    print("  ❌ Groups - WILL NOT BE MIGRATED")
+    print("  ❌ Projects - WILL NOT BE MIGRATED")
+    print("  ❌ Subscriptions - WILL NOT BE MIGRATED")
+    print("=" * 70)
+    print(f"\nSource: {config['source']['server_url']} / {config['source']['site_content_url'] if config['source']['site_content_url'] else 'Default'}")
     print(f"Destination: {config['destination']['pod_url']} / {config['destination']['site_content_url']}\n")
 
     # Create migrator
@@ -150,6 +190,9 @@ def migrate_content():
 
     # Build plan
     plan_builder = MigrationPlanBuilder()
+
+    # Create content owner mapping with default fallback
+    owner_mapping = ContentOwnerMapping(default_owner)
 
     plan_builder = (
         plan_builder
@@ -167,24 +210,22 @@ def migrate_content():
         )
         .for_server_to_cloud()
         .with_tableau_id_authentication_type()
-        .with_tableau_cloud_usernames(lambda ctx: SimpleUsernameMapping().map(ctx))
+        .with_tableau_cloud_usernames(lambda ctx: owner_mapping.map(ctx))
     )
 
-    # Add filters to skip migrating users and projects
-    # Data sources, workbooks, and custom views WILL be migrated
-    # Subscriptions are handled by the separate simple_subscription_migration.py script
-    print("Configuring filters to skip user/project migration...")
+    # Add filters to skip everything except datasources and workbooks
+    print("Configuring content filters...")
     plan_builder.filters.add(SkipUserMigration)
+    plan_builder.filters.add(SkipGroupMigration)
     plan_builder.filters.add(SkipProjectMigration)
 
     # Build and execute
     print("Building migration plan...")
     plan = plan_builder.build()
 
-    print("Starting migration (this may take a while)...\n")
+    print("\nStarting migration...\n")
     print("📊 Migrating data sources...")
-    print("📈 Migrating workbooks...")
-    print("👁️  Migrating custom views...\n")
+    print("📈 Migrating workbooks...\n")
     result = migration.execute(plan)
 
     # Results
