@@ -1,0 +1,14 @@
+{
+  "source": {
+    "server_url": "https://your-tableau-server.com",
+    "site_content_url": "",
+    "access_token_name": "your-token-name",
+    "access_token": "your-token-secret"
+  },
+  "destination": {
+    "pod_url": "https://10ax.online.tableau.com",
+    "site_content_url": "your-site-name",
+    "access_token_name": "your-cloud-token-name",
+    "access_token": "your-cloud-token-secret"
+  }
+}

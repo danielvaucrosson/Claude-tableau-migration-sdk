@@ -5,6 +5,8 @@ Skips users, projects, and subscriptions (handled by separate script).
 """
 
 import logging
+import json
+from pathlib import Path
 from tableau_migration import (
     Migrator,
     MigrationPlanBuilder,
@@ -33,20 +35,50 @@ logging.getLogger('Tableau.Migration.Engine').setLevel(logging.INFO)
 
 
 # =============================================================================
-# CONFIGURATION - EDIT THESE
+# CONFIGURATION - Load from config.json
 # =============================================================================
 
-# SOURCE: Tableau Server
-SOURCE_SERVER_URL = "https://your-tableau-server.com"
-SOURCE_SITE = ""  # Empty string for default site, or "site-name"
-SOURCE_TOKEN_NAME = "your-token-name"
-SOURCE_TOKEN = "your-token-secret"
+def load_config(config_path='config.json'):
+    """Load credentials from config.json file."""
+    config_file = Path(config_path)
 
-# DESTINATION: Tableau Cloud
-DEST_CLOUD_URL = "https://10ax.online.tableau.com"  # Change pod: 10ax, 10ay, etc.
-DEST_SITE = "your-cloud-site"
-DEST_TOKEN_NAME = "your-cloud-token-name"
-DEST_TOKEN = "your-cloud-token-secret"
+    if not config_file.exists():
+        print(f"❌ Config file not found: {config_path}")
+        print(f"\n📋 Setup instructions:")
+        print(f"   1. Copy the template: cp config.json.template config.json")
+        print(f"   2. Edit config.json with your actual credentials")
+        print(f"   3. Run this script again\n")
+        return None
+
+    with open(config_file, 'r') as f:
+        return json.load(f)
+
+def validate_config(config):
+    """Validate that config has all required fields."""
+    if not config:
+        return False
+
+    required_fields = {
+        'source': ['server_url', 'site_content_url', 'access_token_name', 'access_token'],
+        'destination': ['pod_url', 'site_content_url', 'access_token_name', 'access_token']
+    }
+
+    missing = []
+    for section, fields in required_fields.items():
+        if section not in config:
+            missing.append(f"Missing '{section}' section")
+            continue
+        for field in fields:
+            if field not in config[section] or not config[section][field]:
+                missing.append(f"{section}.{field}")
+
+    if missing:
+        print("❌ Missing or empty fields in config.json:")
+        for m in missing:
+            print(f"   - {m}")
+        return False
+
+    return True
 
 
 # =============================================================================
@@ -103,9 +135,15 @@ class SkipProjectMigration(ContentFilterBase[IProject]):
 def migrate_content():
     """Migrate data sources and workbooks (with custom views) from Server to Cloud."""
 
+    # Load and validate configuration
+    config = load_config()
+    if not config or not validate_config(config):
+        return
+
+    print("✅ Configuration loaded successfully\n")
     print("Starting content migration (Data Sources & Workbooks)...")
-    print(f"Source: {SOURCE_SERVER_URL} / {SOURCE_SITE if SOURCE_SITE else 'Default'}")
-    print(f"Destination: {DEST_CLOUD_URL} / {DEST_SITE}\n")
+    print(f"Source: {config['source']['server_url']} / {config['source']['site_content_url'] if config['source']['site_content_url'] else 'Default'}")
+    print(f"Destination: {config['destination']['pod_url']} / {config['destination']['site_content_url']}\n")
 
     # Create migrator
     migration = Migrator()
@@ -116,16 +154,16 @@ def migrate_content():
     plan_builder = (
         plan_builder
         .from_source_tableau_server(
-            server_url=SOURCE_SERVER_URL,
-            site_content_url=SOURCE_SITE,
-            access_token_name=SOURCE_TOKEN_NAME,
-            access_token=SOURCE_TOKEN
+            server_url=config['source']['server_url'],
+            site_content_url=config['source']['site_content_url'],
+            access_token_name=config['source']['access_token_name'],
+            access_token=config['source']['access_token']
         )
         .to_destination_tableau_cloud(
-            pod_url=DEST_CLOUD_URL,
-            site_content_url=DEST_SITE,
-            access_token_name=DEST_TOKEN_NAME,
-            access_token=DEST_TOKEN
+            pod_url=config['destination']['pod_url'],
+            site_content_url=config['destination']['site_content_url'],
+            access_token_name=config['destination']['access_token_name'],
+            access_token=config['destination']['access_token']
         )
         .for_server_to_cloud()
         .with_tableau_id_authentication_type()
