@@ -11,5 +11,10 @@
     "access_token_name": "your-cloud-token-name",
     "access_token": "your-cloud-token-secret"
   },
-  "default_content_owner": "admin@yourcompany.com"
+  "default_content_owner": "admin@yourcompany.com",
+  "default_email_domain": "@yourcompany.com",
+  "migration_scope": {
+    "data_sources": true,
+    "workbooks": true
+  }
 }

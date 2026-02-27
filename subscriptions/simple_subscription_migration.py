@@ -3,110 +3,28 @@ Simple Subscription Migration - Single File
 ONLY migrates subscriptions - skips users and workbooks (assumes they exist in Cloud).
 """
 
-import logging
+import sys
+import os
+
+# Add parent directory to path so we can import migration_utils from repo root
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
 from tableau_migration import (
     Migrator,
     MigrationPlanBuilder,
-    TableauCloudUsernameMappingBase,
-    ContentFilterBase,
-    IUser,
-    IWorkbook,
-    IDataSource,
-    IProject
+)
+from migration_utils import (
+    configure_logging,
+    load_config,
+    validate_config,
+    EmailDomainMapping,
+    SkipUserMigration,
+    SkipProjectMigration,
+    SkipDataSourceMigration,
+    SkipWorkbookMigration,
 )
 
-# Configure logging - show subscription progress but suppress verbose HTTP/retry logs
-logging.basicConfig(
-    level=logging.INFO,  # Allow INFO messages through
-    format='%(message)s'
-)
-
-# Silence the noisy loggers (HTTP requests, retries, etc.) but keep migration engine visible
-logging.getLogger('System.Net.Http.HttpClient.DefaultHttpClient.LogicalHandler').setLevel(logging.CRITICAL)
-logging.getLogger('System.Net.Http.HttpClient.DefaultHttpClient.ClientHandler').setLevel(logging.CRITICAL)
-logging.getLogger('Tableau.Migration.Net.Logging.HttpActivityLogger').setLevel(logging.CRITICAL)
-logging.getLogger('Tableau.Migration.Engine.Conversion.Schedules.ServerToCloudScheduleConverter').setLevel(logging.CRITICAL)
-logging.getLogger('Tableau.Migration.Engine.Hooks.Transformers').setLevel(logging.CRITICAL)
-logging.getLogger('Polly').setLevel(logging.CRITICAL)
-logging.getLogger('System.Net.Http.HttpClient').setLevel(logging.CRITICAL)
-# Keep Tableau.Migration.Engine at INFO to see subscription creation messages
-logging.getLogger('Tableau.Migration.Engine').setLevel(logging.INFO)
-
-
-# =============================================================================
-# CONFIGURATION - EDIT THESE
-# =============================================================================
-
-# SOURCE: Tableau Server
-SOURCE_SERVER_URL = "https://your-tableau-server.com"
-SOURCE_SITE = ""  # Empty string for default site, or "site-name"
-SOURCE_TOKEN_NAME = "your-token-name"
-SOURCE_TOKEN = "your-token-secret"
-
-# DESTINATION: Tableau Cloud
-DEST_CLOUD_URL = "https://10ax.online.tableau.com"  # Change pod: 10ax, 10ay, etc.
-DEST_SITE = "your-cloud-site"
-DEST_TOKEN_NAME = "your-cloud-token-name"
-DEST_TOKEN = "your-cloud-token-secret"
-
-
-# =============================================================================
-# USERNAME MAPPING - Just append @keyrus.com to find matching Cloud users
-# =============================================================================
-
-class SimpleUsernameMapping(TableauCloudUsernameMappingBase):
-    """Append @keyrus.com to Server usernames to match Cloud users."""
-
-    def map(self, ctx):
-        username = ctx.content_item.name
-        _tableau_user_domain = ctx.mapped_location.parent()
-
-        # Already an email? Return as-is
-        if "@" in username:
-            return ctx.map_to(_tableau_user_domain.append(username))
-
-        # Append @keyrus.com
-        email = f"{username}@keyrus.com"
-        print(f"👤 Mapping: {username} → {email}")
-
-        # Return the mapped context with proper location object
-        return ctx.map_to(_tableau_user_domain.append(email))
-
-
-# =============================================================================
-# FILTERS - Control what content actually gets migrated
-# =============================================================================
-
-class SkipUserMigration(ContentFilterBase[IUser]):
-    """Don't migrate users - they should already exist in Cloud."""
-
-    def should_migrate(self, item):
-        print(f"⏭️  Skipping user: {item.source_item.name}")
-        return False  # Don't migrate users
-
-
-class SkipProjectMigration(ContentFilterBase[IProject]):
-    """Don't migrate projects - they should already exist in Cloud."""
-
-    def should_migrate(self, item):
-        print(f"⏭️  Skipping project: {item.source_item.name}")
-        return False  # Don't migrate projects
-
-
-class SkipDataSourceMigration(ContentFilterBase[IDataSource]):
-    """Don't migrate data sources - they should already exist in Cloud."""
-
-    def should_migrate(self, item):
-        print(f"⏭️  Skipping data source: {item.source_item.name}")
-        return False  # Don't migrate data sources
-
-
-class SkipWorkbookMigration(ContentFilterBase[IWorkbook]):
-    """Don't migrate workbooks - they should already exist in Cloud."""
-
-    def should_migrate(self, item):
-        print(f"⏭️  Skipping workbook: {item.source_item.name}")
-        return False  # Don't migrate workbooks
+configure_logging()
 
 
 # =============================================================================
@@ -116,9 +34,20 @@ class SkipWorkbookMigration(ContentFilterBase[IWorkbook]):
 def migrate_subscriptions():
     """Migrate subscriptions from Server to Cloud."""
 
+    # Load config from repo root
+    config_path = os.path.join(
+        os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+        'config.json'
+    )
+    config = load_config(config_path)
+    if not config or not validate_config(config):
+        return
+
+    email_domain = config['default_email_domain']
+
     print("Starting subscription migration...")
-    print(f"Source: {SOURCE_SERVER_URL} / {SOURCE_SITE if SOURCE_SITE else 'Default'}")
-    print(f"Destination: {DEST_CLOUD_URL} / {DEST_SITE}\n")
+    print(f"Source: {config['source']['server_url']} / {config['source']['site_content_url'] if config['source']['site_content_url'] else 'Default'}")
+    print(f"Destination: {config['destination']['pod_url']} / {config['destination']['site_content_url']}\n")
 
     # Create migrator
     migration = Migrator()
@@ -126,23 +55,26 @@ def migrate_subscriptions():
     # Build plan
     plan_builder = MigrationPlanBuilder()
 
+    # Create username mapping once (not per-call)
+    username_mapping = EmailDomainMapping(email_domain)
+
     plan_builder = (
         plan_builder
         .from_source_tableau_server(
-            server_url=SOURCE_SERVER_URL,
-            site_content_url=SOURCE_SITE,
-            access_token_name=SOURCE_TOKEN_NAME,
-            access_token=SOURCE_TOKEN
+            server_url=config['source']['server_url'],
+            site_content_url=config['source']['site_content_url'],
+            access_token_name=config['source']['access_token_name'],
+            access_token=config['source']['access_token']
         )
         .to_destination_tableau_cloud(
-            pod_url=DEST_CLOUD_URL,
-            site_content_url=DEST_SITE,
-            access_token_name=DEST_TOKEN_NAME,
-            access_token=DEST_TOKEN
+            pod_url=config['destination']['pod_url'],
+            site_content_url=config['destination']['site_content_url'],
+            access_token_name=config['destination']['access_token_name'],
+            access_token=config['destination']['access_token']
         )
         .for_server_to_cloud()
         .with_tableau_id_authentication_type()
-        .with_tableau_cloud_usernames(lambda ctx: SimpleUsernameMapping().map(ctx))
+        .with_tableau_cloud_usernames(lambda ctx: username_mapping.map(ctx))
     )
 
     # Add filters to skip migrating users, projects, data sources, and workbooks
@@ -163,10 +95,10 @@ def migrate_subscriptions():
     # Results
     print("\n" + "="*50)
     if result.status.name == "Completed":
-        print("✅ Migration completed!")
+        print("Migration completed!")
         print(f"   Check your Cloud site for migrated content")
     else:
-        print(f"❌ Migration failed: {result.status}")
+        print(f"Migration failed: {result.status}")
         if hasattr(result, 'errors') and result.errors:
             for error in result.errors:
                 print(f"   {error}")

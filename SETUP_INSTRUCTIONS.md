@@ -2,15 +2,15 @@
 
 ## What Gets Migrated
 
-This script migrates **ONLY**:
-- ✅ **Data Sources**
-- ✅ **Workbooks**
+By default, `content_migration.py` migrates:
+- ✅ **Data Sources** (configurable via `migration_scope`)
+- ✅ **Workbooks** (configurable via `migration_scope`)
 
-This script **DOES NOT** migrate:
+It **DOES NOT** migrate:
 - ❌ Users
 - ❌ Groups
 - ❌ Projects
-- ❌ Subscriptions
+- ❌ Subscriptions (use `subscriptions/simple_subscription_migration.py` instead)
 
 ## Prerequisites
 
@@ -45,7 +45,12 @@ Open `config.json` and replace the placeholder values:
     "access_token_name": "your-cloud-token-name",
     "access_token": "your-cloud-token-secret"
   },
-  "default_content_owner": "admin@yourcompany.com"
+  "default_content_owner": "admin@yourcompany.com",
+  "default_email_domain": "@yourcompany.com",
+  "migration_scope": {
+    "data_sources": true,
+    "workbooks": true
+  }
 }
 ```
 
@@ -54,6 +59,8 @@ Open `config.json` and replace the placeholder values:
 - `pod_url` for destination: Update the pod (10ax, 10ay, 10az, etc.) based on your Tableau Cloud instance
 - `site_content_url` for destination: Your Tableau Cloud site name (NOT the full URL)
 - `default_content_owner`: Email of a Cloud user who will own content when the original owner doesn't exist in Cloud
+- `default_email_domain`: The email domain appended to Server usernames that aren't already emails (e.g., `"@yourcompany.com"` turns `jsmith` into `jsmith@yourcompany.com`)
+- `migration_scope` (optional): Control which content types are migrated. Set `"data_sources": false` or `"workbooks": false` to exclude them. Defaults to both `true` if omitted
 
 ### 3. Verify your Tableau Cloud token
 

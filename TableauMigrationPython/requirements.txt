@@ -9,6 +9,9 @@ python-dotenv>=1.0.0
 
 # Python's built-in csv module is used for CSV parsing (no extra deps needed)
 
+# Testing
+pytest>=7.0.0
+
 # Optional: For enhanced CSV handling with pandas
 # Uncomment if you want to use pandas for complex CSV operations
 # pandas>=2.0.0
