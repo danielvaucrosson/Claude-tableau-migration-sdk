@@ -104,6 +104,7 @@ class ContentOwnerMapping(TableauCloudUsernameMappingBase):
     def __init__(self, default_owner, csv_path='user_mappings.csv'):
         self.default_owner = default_owner
         self.mappings = self._load_csv(csv_path)
+        self.mapping_results = []  # Track all mappings for summary
         super().__init__()
 
     def _load_csv(self, csv_path):
@@ -137,8 +138,51 @@ class ContentOwnerMapping(TableauCloudUsernameMappingBase):
             mapped_email = self.default_owner
             source = "default owner"
 
+        # Track this mapping
+        self.mapping_results.append({
+            'username': username,
+            'mapped_email': mapped_email,
+            'source': source
+        })
+
         print(f"👤 {username} → {mapped_email} ({source})")
         return ctx.map_to(domain.append(mapped_email))
+
+    def print_summary(self):
+        """Print detailed mapping summary showing each user and their mapping status."""
+        if not self.mapping_results:
+            print("\n📊 No user mappings were performed")
+            return
+
+        print("\n" + "="*70)
+        print("📊 USER MAPPING SUMMARY")
+        print("="*70)
+
+        # Group by source type
+        csv_mapped = [r for r in self.mapping_results if r['source'] == 'CSV']
+        already_email = [r for r in self.mapping_results if r['source'] == 'already email']
+        default_owner = [r for r in self.mapping_results if r['source'] == 'default owner']
+
+        # Show users with CSV mappings
+        if csv_mapped:
+            print(f"\n✅ Users with CSV mapping ({len(csv_mapped)}):")
+            for result in csv_mapped:
+                print(f"   • {result['username']} → {result['mapped_email']}")
+
+        # Show users already in email format
+        if already_email:
+            print(f"\n📧 Users already in email format ({len(already_email)}):")
+            for result in already_email:
+                print(f"   • {result['username']}")
+
+        # Show users mapped to default owner
+        if default_owner:
+            print(f"\n⚠️  Users without mapping (using default owner) ({len(default_owner)}):")
+            for result in default_owner:
+                print(f"   • {result['username']} → {result['mapped_email']} (default)")
+
+        print(f"\nTotal users processed: {len(self.mapping_results)}")
+        print("="*70)
 
 
 # =============================================================================
@@ -284,6 +328,9 @@ def migrate_content():
     print("📊 Migrating data sources...")
     print("📈 Migrating workbooks...\n")
     result = migration.execute(plan)
+
+    # Show detailed mapping summary
+    owner_mapping.print_summary()
 
     # Results
     print("\n" + "="*50)
