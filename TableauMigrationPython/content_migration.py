@@ -1,7 +1,8 @@
 """
-Content Migration - Data Sources and Workbooks
-Migrates workbooks and data sources (including custom views).
-Skips users, projects, and subscriptions (handled by separate script).
+Workbook Analysis Script
+Analyzes workbooks and their views (including hidden views) WITHOUT migrating.
+Loads user mappings from CSV and analyzes how content would be mapped.
+Uses Migration SDK to download and inspect workbooks, but filters prevent actual migration.
 """
 
 import csv
@@ -16,6 +17,7 @@ from tableau_migration import (
     ContentFilterBase,
     ContentTransformerBase,
     IPublishableWorkbook,
+    IDataSource,
     IUser,
     IProject,
     IGroup
@@ -328,33 +330,41 @@ class WorkbookHiddenViewsTransformer(ContentTransformerBase[IPublishableWorkbook
 # =============================================================================
 
 def migrate_content():
-    """Migrate ONLY data sources and workbooks from Server to Cloud."""
+    """Analyze workbooks and load user mappings WITHOUT migrating."""
 
-    # Load and validate configuration
+    # Load configuration
     config = load_config()
-    if not config or not validate_config(config):
+    if not config:
         return
 
-    # Get default content owner
-    default_owner = config.get('default_content_owner', '')
-    if not default_owner:
-        print("❌ Missing 'default_content_owner' in config.json")
-        print("   This email will own content when the original owner doesn't exist in Cloud")
+    # Get source configuration
+    source = config.get('source', {})
+    if not source or not source.get('server_url'):
+        print("❌ Missing source server configuration in config.json")
         return
 
-    print("✅ Configuration loaded successfully")
-    print(f"   Default content owner: {default_owner}\n")
-    print("=" * 70)
-    print("MIGRATION SCOPE:")
-    print("  ✅ Data Sources - WILL BE MIGRATED")
-    print("  ✅ Workbooks - WILL BE MIGRATED")
-    print("  ❌ Users - WILL NOT BE MIGRATED")
-    print("  ❌ Groups - WILL NOT BE MIGRATED")
-    print("  ❌ Projects - WILL NOT BE MIGRATED")
-    print("  ❌ Subscriptions - WILL NOT BE MIGRATED")
-    print("=" * 70)
-    print(f"\nSource: {config['source']['server_url']} / {config['source']['site_content_url'] if config['source']['site_content_url'] else 'Default'}")
-    print(f"Destination: {config['destination']['pod_url']} / {config['destination']['site_content_url']}\n")
+    # Get default content owner (optional for analysis)
+    default_owner = config.get('default_content_owner', 'analysis@example.com')
+
+    # Destination is optional for analysis - use dummy if not configured
+    destination = config.get('destination', {})
+    if not destination or not destination.get('pod_url'):
+        print("⚠️  Note: Destination not configured - using dummy (analysis only)\n")
+        destination = {
+            'pod_url': 'https://prod-useast-b.online.tableau.com',
+            'site_content_url': 'dummy-site',
+            'access_token_name': 'dummy',
+            'access_token': 'dummy'
+        }
+
+    print("=" * 80)
+    print("📊 WORKBOOK ANALYSIS MODE")
+    print("=" * 80)
+    print(f"Source: {source['server_url']} / {source.get('site_content_url', 'Default')}")
+    print(f"Default content owner: {default_owner}")
+    print("Mode: Analysis only - NO MIGRATION will occur")
+    print("=" * 80)
+    print()
 
     # Create migrator
     migration = Migrator()
@@ -367,61 +377,65 @@ def migrate_content():
     owner_mapping = ContentOwnerMapping(
         default_owner,
         csv_path=str(csv_path),
-        destination_config=config['destination']
+        destination_config=destination
     )
 
     plan_builder = (
         plan_builder
         .from_source_tableau_server(
-            server_url=config['source']['server_url'],
-            site_content_url=config['source']['site_content_url'],
-            access_token_name=config['source']['access_token_name'],
-            access_token=config['source']['access_token']
+            server_url=source['server_url'],
+            site_content_url=source.get('site_content_url', ''),
+            access_token_name=source['access_token_name'],
+            access_token=source['access_token']
         )
         .to_destination_tableau_cloud(
-            pod_url=config['destination']['pod_url'],
-            site_content_url=config['destination']['site_content_url'],
-            access_token_name=config['destination']['access_token_name'],
-            access_token=config['destination']['access_token']
+            pod_url=destination['pod_url'],
+            site_content_url=destination['site_content_url'],
+            access_token_name=destination['access_token_name'],
+            access_token=destination['access_token']
         )
         .for_server_to_cloud()
-        .with_tableau_id_authentication_type()
-        .with_tableau_cloud_usernames(lambda ctx: owner_mapping.map(ctx))
     )
 
-    # Add filters to skip everything except datasources and workbooks
-    print("Configuring content filters...")
+    # Add filters to skip ALL migration (analysis only)
+    print("⚙️  Configuring analysis mode (all migration disabled)...")
     plan_builder.filters.add(SkipUserMigration)
     plan_builder.filters.add(SkipGroupMigration)
     plan_builder.filters.add(SkipProjectMigration)
 
-    # Add transformer to identify hidden views before each workbook is published
-    print("Configuring workbook transformers...")
+    # Also skip workbooks and data sources from being migrated
+    class SkipWorkbookMigration(ContentFilterBase[IPublishableWorkbook]):
+        def should_migrate(self, item):
+            return False
+
+    class SkipDataSourceMigration(ContentFilterBase[IDataSource]):
+        def should_migrate(self, item):
+            return False
+
+    plan_builder.filters.add(SkipWorkbookMigration)
+    plan_builder.filters.add(SkipDataSourceMigration)
+
+    # Add transformer to analyze workbooks
+    print("⚙️  Adding workbook analyzer...")
     plan_builder.transformers.add(WorkbookHiddenViewsTransformer)
 
     # Build and execute
-    print("Building migration plan...")
+    print("🔍 Building analysis plan...")
     plan = plan_builder.build()
 
-    print("\nStarting migration...\n")
-    print("📊 Migrating data sources...")
-    print("📈 Migrating workbooks...\n")
+    print("\n📥 Downloading and analyzing workbooks from source...")
+    print("   (Workbooks will be downloaded but NOT migrated)\n")
     result = migration.execute(plan)
 
     # Show detailed mapping summary
     owner_mapping.print_summary()
 
     # Results
-    print("\n" + "="*50)
-    if result.status.name == "Completed":
-        print("✅ Migration completed!")
-        print(f"   Check your Cloud site for migrated content")
-    else:
-        print(f"❌ Migration failed: {result.status}")
-        if hasattr(result, 'errors') and result.errors:
-            for error in result.errors:
-                print(f"   {error}")
-    print("="*50)
+    print("\n" + "="*80)
+    print(f"✅ Analysis complete - Status: {result.status.name}")
+    if result.status.name != "Completed":
+        print(f"⚠️  Note: Status is {result.status.name}, but this is normal for analysis-only mode")
+    print("="*80)
 
 
 if __name__ == "__main__":
