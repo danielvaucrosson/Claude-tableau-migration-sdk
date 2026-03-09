@@ -4,6 +4,7 @@ Migrates workbooks and data sources (including custom views).
 Skips users, projects, and subscriptions (handled by separate script).
 """
 
+import csv
 import logging
 import json
 from pathlib import Path
@@ -96,34 +97,48 @@ def validate_config(config):
 
 class ContentOwnerMapping(TableauCloudUsernameMappingBase):
     """
-    Map Server usernames to Cloud users.
-    Falls back to default owner if user doesn't exist in Cloud.
+    Map Server usernames to Cloud emails using user_mappings.csv.
+    Falls back to default_content_owner for any user not in the CSV.
     """
 
-    def __init__(self, default_owner):
+    def __init__(self, default_owner, csv_path='user_mappings.csv'):
         self.default_owner = default_owner
+        self.mappings = self._load_csv(csv_path)
         super().__init__()
+
+    def _load_csv(self, csv_path):
+        path = Path(csv_path)
+        if not path.exists():
+            print(f"⚠️  user_mappings.csv not found at '{csv_path}' — all content will be assigned to default owner")
+            return {}
+
+        mappings = {}
+        with open(path, 'r', encoding='utf-8') as f:
+            for row in csv.DictReader(f):
+                username = row.get('ServerUsername', '').strip()
+                email = row.get('CloudEmail', '').strip()
+                if username and email:
+                    mappings[username.lower()] = email
+
+        print(f"📄 Loaded {len(mappings)} user mappings from {csv_path}")
+        return mappings
 
     def map(self, ctx):
         username = ctx.content_item.name
-        _tableau_user_domain = ctx.mapped_location.parent()
+        domain = ctx.mapped_location.parent()
 
-        # Try to map the user
         if "@" in username:
-            # Already an email
             mapped_email = username
+            source = "already email"
+        elif username.lower() in self.mappings:
+            mapped_email = self.mappings[username.lower()]
+            source = "CSV"
         else:
-            # Append @keyrus.com to create email
-            mapped_email = f"{username}@keyrus.com"
+            mapped_email = self.default_owner
+            source = "default owner"
 
-        print(f"👤 Mapping content owner: {username} → {mapped_email}")
-
-        # NOTE: If this user doesn't exist in Cloud, the migration will reassign
-        # to the default owner specified in config. This happens automatically
-        # when the user lookup fails.
-
-        # Return the mapped context with proper location object
-        return ctx.map_to(_tableau_user_domain.append(mapped_email))
+        print(f"👤 {username} → {mapped_email} ({source})")
+        return ctx.map_to(domain.append(mapped_email))
 
 
 # =============================================================================
@@ -228,8 +243,9 @@ def migrate_content():
     # Build plan
     plan_builder = MigrationPlanBuilder()
 
-    # Create content owner mapping with default fallback
-    owner_mapping = ContentOwnerMapping(default_owner)
+    # Create content owner mapping — loads user_mappings.csv with default fallback
+    csv_path = Path(__file__).parent / 'user_mappings.csv'
+    owner_mapping = ContentOwnerMapping(default_owner, csv_path=str(csv_path))
 
     plan_builder = (
         plan_builder
