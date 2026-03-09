@@ -35,6 +35,7 @@ logging.getLogger('Tableau.Migration.Engine.Conversion.Schedules.ServerToCloudSc
 logging.getLogger('Tableau.Migration.Engine.Hooks.Transformers').setLevel(logging.CRITICAL)
 logging.getLogger('Polly').setLevel(logging.CRITICAL)
 logging.getLogger('System.Net.Http.HttpClient').setLevel(logging.CRITICAL)
+logging.getLogger('tableauserverclient').setLevel(logging.CRITICAL)  # Suppress TSC REST API logs
 # Keep Tableau.Migration.Engine at INFO to see content creation messages
 logging.getLogger('Tableau.Migration.Engine').setLevel(logging.INFO)
 
