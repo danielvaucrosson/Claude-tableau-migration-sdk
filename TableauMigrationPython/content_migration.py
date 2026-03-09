@@ -118,6 +118,12 @@ class ContentOwnerMapping(TableauCloudUsernameMappingBase):
         if not self.destination_config:
             return set()
 
+        # Skip verification if using dummy destination (analysis mode)
+        if (self.destination_config.get('access_token_name') == 'dummy' or
+            self.destination_config.get('site_content_url') == 'dummy-site'):
+            print("⏭️  Skipping Cloud user verification (analysis mode with dummy destination)\n")
+            return set()
+
         try:
             import tableauserverclient as TSC
             import warnings
@@ -483,12 +489,7 @@ def migrate_content():
                 if item.size > self.MAX_SIZE_BYTES:
                     print(f"   ⏭️  Skipping large workbook: {item.name} ({size_mb:.1f} MB)")
                     return False
-                else:
-                    # Show size for workbooks we're processing
-                    print(f"   📥 Downloading: {item.name} ({size_mb:.1f} MB)")
-            else:
-                print(f"   📥 Downloading: {item.name} (size unknown)")
-            return True  # Process workbooks under 100MB or without size info
+            return True  # Process workbooks under 50MB or without size info
 
     plan_builder.filters.add(SkipLargeWorkbooks)
     plan_builder.filters.add(SkipWorkbookMigration)
