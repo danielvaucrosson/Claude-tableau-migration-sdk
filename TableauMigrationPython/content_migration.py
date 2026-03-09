@@ -305,15 +305,27 @@ class WorkbookHiddenViewsTransformer(ContentTransformerBase[IPublishableWorkbook
     to log which views will be hidden on the destination site.
     """
 
+    # Class-level counter for progress tracking
+    workbook_count = 0
+
+    @classmethod
+    def reset_counter(cls):
+        """Reset the workbook counter."""
+        cls.workbook_count = 0
+
     def transform(self, item: IPublishableWorkbook) -> IPublishableWorkbook:
+        WorkbookHiddenViewsTransformer.workbook_count += 1
+
         all_views = list(item.views) if item.views else []
         hidden_names = list(item.hidden_view_names) if item.hidden_view_names else []
 
         view_names = [v.name for v in all_views]
         visible_names = [n for n in view_names if n not in hidden_names]
 
+        # Show progress with workbook number
         logger.info(
-            "Workbook '%s': %d view(s) total — %d visible %s, %d hidden %s",
+            "[%d] Workbook '%s': %d view(s) total — %d visible %s, %d hidden %s",
+            WorkbookHiddenViewsTransformer.workbook_count,
             item.name,
             len(view_names),
             len(visible_names),
@@ -464,6 +476,7 @@ def migrate_content():
 
     # Add transformer to analyze workbooks
     print("⚙️  Adding workbook analyzer...")
+    WorkbookHiddenViewsTransformer.reset_counter()
     plan_builder.transformers.add(WorkbookHiddenViewsTransformer)
 
     # Build and execute
@@ -471,8 +484,16 @@ def migrate_content():
     plan = plan_builder.build()
 
     print("\n📥 Downloading and analyzing workbooks from source...")
-    print("   (Workbooks will be downloaded but NOT migrated)\n")
-    result = migration.execute(plan)
+    print("   (Workbooks will be downloaded but NOT migrated)")
+    print("   ⏱️  Large workbooks may take several minutes to download")
+    print("   Press Ctrl+C to stop if needed\n")
+
+    try:
+        result = migration.execute(plan)
+    except KeyboardInterrupt:
+        print("\n\n⚠️  Analysis interrupted by user")
+        print(f"   Processed {WorkbookHiddenViewsTransformer.workbook_count} workbook(s) before stopping\n")
+        return
 
     # Show detailed mapping summary
     owner_mapping.print_summary()
