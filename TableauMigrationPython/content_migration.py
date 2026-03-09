@@ -7,6 +7,7 @@ Skips users, projects, and subscriptions (handled by separate script).
 import csv
 import logging
 import json
+import time
 from pathlib import Path
 from tableau_migration import (
     Migrator,
@@ -101,11 +102,40 @@ class ContentOwnerMapping(TableauCloudUsernameMappingBase):
     Falls back to default_content_owner for any user not in the CSV.
     """
 
-    def __init__(self, default_owner, csv_path='user_mappings.csv'):
+    def __init__(self, default_owner, csv_path='user_mappings.csv', destination_config=None):
         self.default_owner = default_owner
+        self.destination_config = destination_config
+        self.cloud_users = set()  # Will store verified Cloud users
         self.mappings = self._load_csv(csv_path)
         self.mapping_results = []  # Track all mappings for summary
         super().__init__()
+
+    def _get_cloud_users(self):
+        """Fetch list of existing users from Tableau Cloud."""
+        if not self.destination_config:
+            return set()
+
+        try:
+            from tableau_migration import PyTableauCloudSite
+
+            print("🔍 Connecting to Tableau Cloud to verify users...")
+
+            site = PyTableauCloudSite(
+                pod_url=self.destination_config['pod_url'],
+                site_content_url=self.destination_config['site_content_url'],
+                access_token_name=self.destination_config['access_token_name'],
+                access_token=self.destination_config['access_token']
+            )
+
+            users = site.users.get_all()
+            user_emails = {user.name.lower() for user in users if user.name}
+            print(f"✅ Found {len(user_emails)} users in Tableau Cloud\n")
+            return user_emails
+
+        except Exception as e:
+            print(f"⚠️  Could not verify Cloud users: {e}")
+            print("   Proceeding without verification...\n")
+            return set()
 
     def _load_csv(self, csv_path):
         path = Path(csv_path)
@@ -113,17 +143,33 @@ class ContentOwnerMapping(TableauCloudUsernameMappingBase):
             print(f"⚠️  user_mappings.csv not found at '{csv_path}' — all content will be assigned to default owner")
             return {}
 
+        # Get list of existing Cloud users
+        self.cloud_users = self._get_cloud_users()
+
         mappings = {}
-        print(f"\n📄 Loading user mappings from {csv_path}:")
+        print(f"📄 Loading user mappings from {csv_path}:")
         with open(path, 'r', encoding='utf-8') as f:
             for row in csv.DictReader(f):
                 username = row.get('ServerUsername', '').strip()
                 email = row.get('CloudEmail', '').strip()
+
                 if username and email:
                     mappings[username.lower()] = email
-                    print(f"   ✅ {username} → {email}")
+
+                    # Check if user exists in Cloud
+                    if self.cloud_users:
+                        if email.lower() in self.cloud_users:
+                            print(f"   ✅ {username} → {email} (user exists in Cloud)")
+                        else:
+                            print(f"   ❌ {username} → {email} (user NOT found - will use default owner: {self.default_owner})")
+                    else:
+                        print(f"   ✅ {username} → {email}")
+
+                    time.sleep(0.75)  # 0.75 second delay between items
+
                 elif username or email:
                     print(f"   ⚠️  Skipped incomplete row: username='{username}', email='{email}'")
+                    time.sleep(0.75)
 
         print(f"\n✅ Loaded {len(mappings)} user mapping(s)\n")
         return mappings
@@ -137,7 +183,13 @@ class ContentOwnerMapping(TableauCloudUsernameMappingBase):
             source = "already email"
         elif username.lower() in self.mappings:
             mapped_email = self.mappings[username.lower()]
-            source = "CSV"
+            # Check if mapped user exists in Cloud
+            if self.cloud_users and mapped_email.lower() not in self.cloud_users:
+                # User doesn't exist, fall back to default owner
+                mapped_email = self.default_owner
+                source = "CSV → default (user not found)"
+            else:
+                source = "CSV"
         else:
             mapped_email = self.default_owner
             source = "default owner"
@@ -293,7 +345,11 @@ def migrate_content():
 
     # Create content owner mapping — loads user_mappings.csv with default fallback
     csv_path = Path(__file__).parent / 'user_mappings.csv'
-    owner_mapping = ContentOwnerMapping(default_owner, csv_path=str(csv_path))
+    owner_mapping = ContentOwnerMapping(
+        default_owner,
+        csv_path=str(csv_path),
+        destination_config=config['destination']
+    )
 
     plan_builder = (
         plan_builder
