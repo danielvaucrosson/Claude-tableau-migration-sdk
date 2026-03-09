@@ -329,6 +329,49 @@ class WorkbookHiddenViewsTransformer(ContentTransformerBase[IPublishableWorkbook
 # MIGRATION
 # =============================================================================
 
+def verify_source_connection(source_config):
+    """Verify we can connect to the source Tableau Server."""
+    import tableauserverclient as TSC
+
+    print("🔍 Verifying source server connection...")
+
+    try:
+        # Temporarily disable logging for this test
+        logging.disable(logging.CRITICAL)
+
+        # Create authentication
+        tableau_auth = TSC.PersonalAccessTokenAuth(
+            token_name=source_config['access_token_name'],
+            personal_access_token=source_config['access_token'],
+            site_id=source_config.get('site_content_url', '')
+        )
+
+        # Try to connect
+        server = TSC.Server(source_config['server_url'], use_server_version=True)
+
+        with server.auth.sign_in(tableau_auth):
+            print(f"✅ Successfully connected to source server")
+            print(f"   Server version: {server.version}")
+            print(f"   Site: {source_config.get('site_content_url', 'Default')}\n")
+
+        # Re-enable logging
+        logging.disable(logging.NOTSET)
+        return True
+
+    except Exception as e:
+        logging.disable(logging.NOTSET)
+        print(f"\n❌ Failed to connect to source server:")
+        print(f"   Server: {source_config['server_url']}")
+        print(f"   Site: {source_config.get('site_content_url', 'Default')}")
+        print(f"   Error: {e}\n")
+        print("💡 Check your config.json:")
+        print("   - Is the server_url correct?")
+        print("   - Is the site_content_url correct?")
+        print("   - Are the access token credentials valid?")
+        print("   - Has the token expired?\n")
+        return False
+
+
 def migrate_content():
     """Analyze workbooks and load user mappings WITHOUT migrating."""
 
@@ -341,6 +384,10 @@ def migrate_content():
     source = config.get('source', {})
     if not source or not source.get('server_url'):
         print("❌ Missing source server configuration in config.json")
+        return
+
+    # Verify source connection before proceeding
+    if not verify_source_connection(source):
         return
 
     # Get default content owner (optional for analysis)
