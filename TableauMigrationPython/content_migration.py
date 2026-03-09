@@ -9,7 +9,12 @@ import csv
 import logging
 import json
 import time
+import os
 from pathlib import Path
+
+# Configure SDK to fetch all content (increase page size)
+os.environ['MigrationSDK__Network__FileChunkSizeKB'] = '4096'  # Larger chunks
+os.environ['MigrationSDK__Network__DefaultPageSize'] = '1000'  # Fetch more items per page
 from tableau_migration import (
     Migrator,
     MigrationPlanBuilder,
@@ -504,13 +509,16 @@ def migrate_content():
     print("🔍 Building analysis plan...")
     plan = plan_builder.build()
 
-    print("\n📥 Downloading and analyzing workbooks from source...")
-    print("   (Workbooks will be downloaded but NOT migrated)")
+    print("\n📥 Fetching workbook list from server...")
+    print("   (If this stops at 25, it's a pagination issue)")
     print("   ⏭️  Skipping workbooks larger than 50MB")
     print("   Press Ctrl+C to stop if needed\n")
 
     try:
         result = migration.execute(plan)
+
+        # Show how many workbooks were actually found/processed
+        print(f"\n📊 Total workbooks found by SDK: {WorkbookHiddenViewsTransformer.workbook_count}")
     except KeyboardInterrupt:
         print("\n\n⚠️  Analysis interrupted by user")
         print(f"   Processed {WorkbookHiddenViewsTransformer.workbook_count} workbook(s) before stopping\n")
