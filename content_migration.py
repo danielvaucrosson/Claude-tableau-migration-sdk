@@ -12,6 +12,8 @@ from tableau_migration import (
     MigrationPlanBuilder,
     TableauCloudUsernameMappingBase,
     ContentFilterBase,
+    ContentTransformerBase,
+    IPublishableWorkbook,
     IUser,
     IProject,
     IGroup
@@ -153,6 +155,41 @@ class SkipProjectMigration(ContentFilterBase[IProject]):
 
 
 # =============================================================================
+# TRANSFORMERS - Inspect and log workbook view visibility before publishing
+# =============================================================================
+
+logger = logging.getLogger(__name__)
+
+
+class WorkbookHiddenViewsTransformer(ContentTransformerBase[IPublishableWorkbook]):
+    """
+    Identifies hidden views for each workbook before it is published.
+
+    Reads PyPublishableWorkbook.views and PyPublishableWorkbook.hidden_view_names
+    to log which views will be hidden on the destination site.
+    """
+
+    def transform(self, item: IPublishableWorkbook) -> IPublishableWorkbook:
+        all_views = list(item.views) if item.views else []
+        hidden_names = list(item.hidden_view_names) if item.hidden_view_names else []
+
+        view_names = [v.name for v in all_views]
+        visible_names = [n for n in view_names if n not in hidden_names]
+
+        logger.info(
+            "Workbook '%s': %d view(s) total — %d visible %s, %d hidden %s",
+            item.name,
+            len(view_names),
+            len(visible_names),
+            visible_names,
+            len(hidden_names),
+            hidden_names,
+        )
+
+        return item
+
+
+# =============================================================================
 # MIGRATION
 # =============================================================================
 
@@ -218,6 +255,10 @@ def migrate_content():
     plan_builder.filters.add(SkipUserMigration)
     plan_builder.filters.add(SkipGroupMigration)
     plan_builder.filters.add(SkipProjectMigration)
+
+    # Add transformer to identify hidden views before each workbook is published
+    print("Configuring workbook transformers...")
+    plan_builder.transformers.add(WorkbookHiddenViewsTransformer())
 
     # Build and execute
     print("Building migration plan...")
