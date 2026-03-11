@@ -95,28 +95,56 @@ def analyze_all_workbooks():
             print()
 
             # For now, just show what we CAN get from TSC
-            print("📋 Workbook Details from TSC:\n")
+            print("📋 Workbooks with Hidden Views:\n")
 
-            for idx, wb in enumerate(workbooks_to_analyze[:25], 1):  # Show first 25 for now
+            workbooks_with_hidden = []
+            display_count = 0
+
+            for wb in workbooks_to_analyze:
                 # Populate views for this workbook
                 server.workbooks.populate_views(wb)
 
+                # Check if this workbook has any hidden views
+                has_hidden = False
+                if wb.views:
+                    for view in wb.views:
+                        if hasattr(view, 'hidden') and view.hidden:
+                            has_hidden = True
+                            break
+
+                # Only include workbooks with hidden views
+                if has_hidden:
+                    workbooks_with_hidden.append(wb)
+
+            print(f"Found {len(workbooks_with_hidden)} workbook(s) with hidden views\n")
+
+            # Display details for workbooks with hidden views (limit to first 25)
+            for idx, wb in enumerate(workbooks_with_hidden[:25], 1):
                 size_str = f"({wb.size / (1024*1024):.1f} MB)" if wb.size else "(unknown)"
+
+                # Count visible and hidden views
+                visible_count = 0
+                hidden_count = 0
 
                 print(f"[{idx}] {wb.name} {size_str}")
                 print(f"    Project: {wb.project_name}")
-                print(f"    Views: {len(wb.views) if wb.views else 0}")
 
                 if wb.views:
                     for view in wb.views:
-                        # TSC views have a 'hidden' attribute (might be None)
-                        hidden_status = "🔒 HIDDEN" if hasattr(view, 'hidden') and view.hidden else "✅ visible"
-                        print(f"       • {view.name} - {hidden_status}")
+                        is_hidden = hasattr(view, 'hidden') and view.hidden
+                        if is_hidden:
+                            hidden_count += 1
+                            print(f"       • {view.name} - 🔒 HIDDEN")
+                        else:
+                            visible_count += 1
+                            print(f"       • {view.name} - ✅ visible")
+
+                    print(f"    Total: {len(wb.views)} views ({visible_count} visible, {hidden_count} hidden)")
 
                 print()
 
-            if len(workbooks_to_analyze) > 25:
-                print(f"\n... and {len(workbooks_to_analyze) - 25} more workbooks")
+            if len(workbooks_with_hidden) > 25:
+                print(f"\n... and {len(workbooks_with_hidden) - 25} more workbooks with hidden views")
 
             print("="*80)
             print("💡 NEXT STEPS:")

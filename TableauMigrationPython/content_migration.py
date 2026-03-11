@@ -346,17 +346,18 @@ class WorkbookHiddenViewsTransformer(ContentTransformerBase[IPublishableWorkbook
         view_names = [v.name for v in all_views]
         visible_names = [n for n in view_names if n not in hidden_names]
 
-        # Show progress with workbook number
-        logger.info(
-            "[%d] Workbook '%s': %d view(s) total — %d visible %s, %d hidden %s",
-            WorkbookHiddenViewsTransformer.workbook_count,
-            item.name,
-            len(view_names),
-            len(visible_names),
-            visible_names,
-            len(hidden_names),
-            hidden_names,
-        )
+        # Only log workbooks that have hidden views (delta between visible and total)
+        if len(hidden_names) > 0:
+            logger.info(
+                "[%d] Workbook '%s': %d view(s) total — %d visible %s, %d hidden %s",
+                WorkbookHiddenViewsTransformer.workbook_count,
+                item.name,
+                len(view_names),
+                len(visible_names),
+                visible_names,
+                len(hidden_names),
+                hidden_names,
+            )
 
         return item
 
@@ -446,6 +447,7 @@ def migrate_content():
     print(f"Source: {source['server_url']} / {source.get('site_content_url', 'Default')}")
     print(f"Default content owner: {default_owner}")
     print("Mode: Analysis only - NO MIGRATION will occur")
+    print("Filter: Only showing workbooks with hidden views")
     print("=" * 80)
     print()
 
@@ -572,6 +574,7 @@ def migrate_content():
     print("="*80)
     print(f"Total batches processed: {batch_number}")
     print(f"Total workbooks analyzed: {WorkbookHiddenViewsTransformer.workbook_count}")
+    print(f"Note: Only workbooks with hidden views are shown above")
     print(f"Workbooks skipped (>50MB): Check output above")
     print("="*80)
 
