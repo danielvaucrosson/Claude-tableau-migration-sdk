@@ -75,8 +75,14 @@ def validate_config(config):
             missing.append(f"Missing '{section}' section")
             continue
         for field in fields:
-            if field not in config[section] or not config[section][field]:
-                missing.append(f"{section}.{field}")
+            # site_content_url is allowed to be blank (empty string = default site)
+            if field == 'site_content_url':
+                if field not in config[section]:
+                    missing.append(f"{section}.{field}")
+            else:
+                # All other fields must be present and non-empty
+                if field not in config[section] or not config[section][field]:
+                    missing.append(f"{section}.{field}")
 
     # Check for default content owner
     if 'default_content_owner' not in config or not config['default_content_owner']:
