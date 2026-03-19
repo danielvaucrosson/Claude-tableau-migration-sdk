@@ -1,6 +1,8 @@
 """
 Simple Subscription Migration - Single File
-ONLY migrates subscriptions - skips users and workbooks (assumes they exist in Cloud).
+ONLY migrates subscriptions - skips all other content types.
+Skips: users, projects, workbooks, data sources, and extract refresh tasks.
+Assumes content and users already exist in Cloud.
 Uses config.json and user_mappings.csv from parent directory.
 """
 
@@ -17,7 +19,8 @@ from tableau_migration import (
     IUser,
     IWorkbook,
     IDataSource,
-    IProject
+    IProject,
+    IServerExtractRefreshTask
 )
 
 # Configure logging - show subscription progress but suppress verbose HTTP/retry logs
@@ -306,6 +309,14 @@ class SkipWorkbookMigration(ContentFilterBase[IWorkbook]):
         return False  # Don't migrate workbooks
 
 
+class SkipExtractRefreshTaskMigration(ContentFilterBase[IServerExtractRefreshTask]):
+    """Don't migrate extract refresh tasks - only migrating subscriptions."""
+
+    def should_migrate(self, item):
+        print(f"⏭️  Skipping extract refresh task: {item.source_item.id}")
+        return False  # Don't migrate extract refresh tasks
+
+
 # =============================================================================
 # MIGRATION
 # =============================================================================
@@ -365,13 +376,14 @@ def migrate_subscriptions():
         .with_tableau_cloud_usernames(lambda ctx: owner_mapping.map(ctx))
     )
 
-    # Add filters to skip migrating users, projects, data sources, and workbooks
+    # Add filters to skip migrating users, projects, data sources, workbooks, and extract refresh tasks
     # Only subscriptions will be migrated
-    print("Configuring filters to skip user/workbook migration...")
+    print("Configuring filters to skip content migration (subscriptions only)...")
     plan_builder.filters.add(SkipUserMigration)
     plan_builder.filters.add(SkipProjectMigration)
     plan_builder.filters.add(SkipDataSourceMigration)
     plan_builder.filters.add(SkipWorkbookMigration)
+    plan_builder.filters.add(SkipExtractRefreshTaskMigration)
 
     # Build and execute
     print("Building migration plan...")
