@@ -1,7 +1,7 @@
 """
 Simple Subscription Migration - Single File
 ONLY migrates subscriptions - skips all other content types.
-Skips: users, projects, workbooks, data sources, and extract refresh tasks.
+Skips: users, projects, workbooks, data sources, custom views, and extract refresh tasks.
 Assumes content and users already exist in Cloud.
 Uses config.json and user_mappings.csv from parent directory.
 """
@@ -20,7 +20,8 @@ from tableau_migration import (
     IWorkbook,
     IDataSource,
     IProject,
-    IServerExtractRefreshTask
+    IServerExtractRefreshTask,
+    ICustomView
 )
 
 # Configure logging - show subscription progress but suppress verbose HTTP/retry logs
@@ -317,6 +318,14 @@ class SkipExtractRefreshTaskMigration(ContentFilterBase[IServerExtractRefreshTas
         return False  # Don't migrate extract refresh tasks
 
 
+class SkipCustomViewMigration(ContentFilterBase[ICustomView]):
+    """Don't migrate custom views - only migrating subscriptions."""
+
+    def should_migrate(self, item):
+        print(f"⏭️  Skipping custom view: {item.source_item.name}")
+        return False  # Don't migrate custom views
+
+
 # =============================================================================
 # MIGRATION
 # =============================================================================
@@ -376,7 +385,7 @@ def migrate_subscriptions():
         .with_tableau_cloud_usernames(lambda ctx: owner_mapping.map(ctx))
     )
 
-    # Add filters to skip migrating users, projects, data sources, workbooks, and extract refresh tasks
+    # Add filters to skip all content except subscriptions
     # Only subscriptions will be migrated
     print("Configuring filters to skip content migration (subscriptions only)...")
     plan_builder.filters.add(SkipUserMigration)
@@ -384,6 +393,7 @@ def migrate_subscriptions():
     plan_builder.filters.add(SkipDataSourceMigration)
     plan_builder.filters.add(SkipWorkbookMigration)
     plan_builder.filters.add(SkipExtractRefreshTaskMigration)
+    plan_builder.filters.add(SkipCustomViewMigration)
 
     # Build and execute
     print("Building migration plan...")
