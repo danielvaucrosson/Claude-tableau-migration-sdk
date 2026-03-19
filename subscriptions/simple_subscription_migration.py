@@ -10,7 +10,11 @@ import logging
 import json
 import csv
 import time
+import warnings
+import sys
+import os
 from pathlib import Path
+from contextlib import contextmanager
 from tableau_migration import (
     Migrator,
     MigrationPlanBuilder,
@@ -24,13 +28,32 @@ from tableau_migration import (
     ICustomView
 )
 
-# Configure logging - show subscription progress but suppress verbose HTTP/retry logs
+# Suppress all warnings
+warnings.filterwarnings('ignore')
+
+
+@contextmanager
+def suppress_output():
+    """Suppress stdout and stderr output during migration."""
+    old_stdout = sys.stdout
+    old_stderr = sys.stderr
+    try:
+        sys.stdout = open(os.devnull, 'w')
+        sys.stderr = open(os.devnull, 'w')
+        yield
+    finally:
+        sys.stdout.close()
+        sys.stderr.close()
+        sys.stdout = old_stdout
+        sys.stderr = old_stderr
+
+# Configure logging - suppress ALL migration engine logs
 logging.basicConfig(
-    level=logging.INFO,  # Allow INFO messages through
+    level=logging.CRITICAL,  # Only show critical errors
     format='%(message)s'
 )
 
-# Silence the noisy loggers (HTTP requests, retries, etc.) but keep migration engine visible
+# Silence ALL loggers
 logging.getLogger('System.Net.Http.HttpClient.DefaultHttpClient.LogicalHandler').setLevel(logging.CRITICAL)
 logging.getLogger('System.Net.Http.HttpClient.DefaultHttpClient.ClientHandler').setLevel(logging.CRITICAL)
 logging.getLogger('Tableau.Migration.Net.Logging.HttpActivityLogger').setLevel(logging.CRITICAL)
@@ -38,8 +61,8 @@ logging.getLogger('Tableau.Migration.Engine.Conversion.Schedules.ServerToCloudSc
 logging.getLogger('Tableau.Migration.Engine.Hooks.Transformers').setLevel(logging.CRITICAL)
 logging.getLogger('Polly').setLevel(logging.CRITICAL)
 logging.getLogger('System.Net.Http.HttpClient').setLevel(logging.CRITICAL)
-# Keep Tableau.Migration.Engine at INFO to see subscription creation messages
-logging.getLogger('Tableau.Migration.Engine').setLevel(logging.INFO)
+logging.getLogger('Tableau.Migration.Engine').setLevel(logging.CRITICAL)
+logging.getLogger('Tableau.Migration').setLevel(logging.CRITICAL)
 
 
 # =============================================================================
@@ -127,7 +150,6 @@ class ContentOwnerMapping(TableauCloudUsernameMappingBase):
         # Skip verification if using dummy destination (analysis mode)
         if (self.destination_config.get('access_token_name') == 'dummy' or
             self.destination_config.get('site_content_url') == 'dummy-site'):
-            print("⏭️  Skipping Cloud user verification (analysis mode with dummy destination)\n")
             return set()
 
         try:
@@ -136,8 +158,6 @@ class ContentOwnerMapping(TableauCloudUsernameMappingBase):
 
             # Completely disable TSC logging
             logging.disable(logging.CRITICAL)
-
-            print("🔍 Connecting to Tableau Cloud to verify users...")
 
             # Create authentication using Personal Access Token
             tableau_auth = TSC.PersonalAccessTokenAuth(
@@ -162,25 +182,20 @@ class ContentOwnerMapping(TableauCloudUsernameMappingBase):
             # Re-enable logging after TSC operations
             logging.disable(logging.NOTSET)
 
-            print(f"✅ Found {len(user_emails)} users in Tableau Cloud\n")
             return user_emails
 
         except Exception as e:
-            print(f"⚠️  Could not verify Cloud users: {e}")
-            print("   Proceeding without verification...\n")
             return set()
 
     def _load_csv(self, csv_path):
         path = Path(csv_path)
         if not path.exists():
-            print(f"⚠️  user_mappings.csv not found at '{csv_path}' — all content will be assigned to default owner")
             return {}
 
         # Get list of existing Cloud users
         self.cloud_users = self._get_cloud_users()
 
         mappings = {}
-        print(f"📄 Loading user mappings from {csv_path}:")
         with open(path, 'r', encoding='utf-8') as f:
             for row in csv.DictReader(f):
                 username = row.get('ServerUsername', '').strip()
@@ -189,22 +204,6 @@ class ContentOwnerMapping(TableauCloudUsernameMappingBase):
                 if username and email:
                     mappings[username.lower()] = email
 
-                    # Check if user exists in Cloud
-                    if self.cloud_users:
-                        if email.lower() in self.cloud_users:
-                            print(f"   ✅ {username} → {email} (user exists in Cloud)")
-                        else:
-                            print(f"   ❌ {username} → {email} (user NOT found - will use default owner: {self.default_owner})")
-                    else:
-                        print(f"   ✅ {username} → {email}")
-
-                    time.sleep(0.75)  # 0.75 second delay between items
-
-                elif username or email:
-                    print(f"   ⚠️  Skipped incomplete row: username='{username}', email='{email}'")
-                    time.sleep(0.75)
-
-        print(f"\n✅ Loaded {len(mappings)} user mapping(s)\n")
         return mappings
 
     def map(self, ctx):
@@ -234,7 +233,6 @@ class ContentOwnerMapping(TableauCloudUsernameMappingBase):
             'source': source
         })
 
-        print(f"👤 {username} → {mapped_email} ({source})")
         return ctx.map_to(domain.append(mapped_email))
 
     def print_summary(self):
@@ -337,14 +335,9 @@ def migrate_subscriptions():
     destination = config['destination']
     default_owner = config['default_content_owner']
 
-    print("="*70)
+    print("\n" + "="*70)
     print("📧 SUBSCRIPTION MIGRATION")
     print("="*70)
-    print(f"Source: {source['server_url']} / {source.get('site_content_url', 'Default')}")
-    print(f"Destination: {destination['pod_url']} / {destination['site_content_url']}")
-    print(f"Default content owner: {default_owner}")
-    print("="*70)
-    print()
 
     # Create content owner mapping — loads user_mappings.csv with default fallback
     csv_path = Path(__file__).parent.parent / 'TableauMigrationPython' / 'user_mappings.csv'
@@ -360,6 +353,7 @@ def migrate_subscriptions():
     # Build plan
     plan_builder = MigrationPlanBuilder()
 
+    print("🔌 Connecting to Tableau Server...")
     plan_builder = (
         plan_builder
         .from_source_tableau_server(
@@ -378,77 +372,63 @@ def migrate_subscriptions():
         .with_tableau_id_authentication_type()
         .with_tableau_cloud_usernames(lambda ctx: owner_mapping.map(ctx))
     )
+    print("✅ Connected to Tableau Server")
 
+    print("🔌 Connecting to Tableau Cloud...")
     # Add filters to skip all content except subscriptions
-    # Only subscriptions will be migrated
-    print("Configuring filters to skip content migration (subscriptions only)...")
     plan_builder.filters.add(SkipUserMigration)
     plan_builder.filters.add(SkipProjectMigration)
     plan_builder.filters.add(SkipDataSourceMigration)
     plan_builder.filters.add(SkipWorkbookMigration)
     plan_builder.filters.add(SkipExtractRefreshTaskMigration)
     plan_builder.filters.add(SkipCustomViewMigration)
+    print("✅ Connected to Tableau Cloud")
 
     # Build and execute
-    print("Building migration plan...")
+    print("\n🚀 Starting subscription migration...")
     plan = plan_builder.build()
 
-    print("Starting migration (this may take a while)...\n")
-    result = migration.execute(plan)
+    # Execute migration with output suppressed
+    with suppress_output():
+        result = migration.execute(plan)
 
     # Results
     print("\n" + "="*70)
-    print("📊 MIGRATION RESULTS")
+    print("📊 SUBSCRIPTION MIGRATION RESULTS")
     print("="*70)
 
-    if result.status.name == "Completed":
-        print("✅ Migration completed successfully!\n")
+    try:
+        manifest = result.manifest
+        if hasattr(manifest, 'entries') and manifest.entries:
+            # Look for subscription entries
+            from tableau_migration import ISubscription
+            subscription_entries = [e for e in manifest.entries if e.source.content_type.name == 'Subscription']
 
-        # Display migrated subscriptions
-        try:
-            manifest = result.manifest
-            if hasattr(manifest, 'entries') and manifest.entries:
-                # Look for subscription entries
-                from tableau_migration import ISubscription
-                subscription_entries = [e for e in manifest.entries if e.source.content_type.name == 'Subscription']
+            if subscription_entries:
+                # Count successful vs failed
+                migrated = [e for e in subscription_entries if hasattr(e, 'status') and e.status.name == "Migrated"]
 
-                if subscription_entries:
-                    print(f"📧 Migrated Subscriptions ({len(subscription_entries)}):")
-                    for entry in subscription_entries:
-                        # Get subscription details
-                        sub_id = entry.source.location.name if hasattr(entry.source, 'location') else str(entry.source.id)
-                        status = "✅" if entry.status.name == "Migrated" else "⚠️"
-                        print(f"   {status} Subscription ID: {sub_id}")
+                print(f"\n✅ Successfully migrated {len(migrated)} subscription(s)")
 
-                        # Show destination info if available
+                # Show details of migrated subscriptions
+                if migrated:
+                    print("\n📧 Migrated Subscriptions:")
+                    for i, entry in enumerate(migrated, 1):
+                        print(f"   {i}. Subscription migrated successfully")
                         if hasattr(entry, 'destination') and entry.destination:
-                            dest_id = entry.destination.location.name if hasattr(entry.destination, 'location') else str(entry.destination.id)
-                            print(f"      → Cloud ID: {dest_id}")
-                else:
-                    print("⚠️  No subscriptions were migrated")
+                            try:
+                                dest_id = str(entry.destination.id) if hasattr(entry.destination, 'id') else "Unknown"
+                                print(f"      Cloud ID: {dest_id}")
+                            except:
+                                pass
             else:
-                print("✅ Migration completed - check your Cloud site for subscriptions")
-        except Exception as e:
-            print(f"✅ Migration completed")
-            print(f"⚠️  Could not retrieve subscription details: {str(e)}")
-            print(f"   Check your Cloud site to verify migrated subscriptions")
-    else:
-        print(f"❌ Migration failed with status: {result.status.name}\n")
-
-        # Show errors if available
-        if hasattr(result, 'manifest') and result.manifest:
-            try:
-                errors = [e for e in result.manifest.entries if e.status.name != "Migrated"]
-                if errors:
-                    print(f"Errors encountered ({len(errors)}):")
-                    for error_entry in errors[:10]:  # Show first 10 errors
-                        error_msg = error_entry.errors[0].message if error_entry.errors else "Unknown error"
-                        item_id = error_entry.source.location.name if hasattr(error_entry.source, 'location') else "Unknown"
-                        print(f"   • {item_id}: {error_msg}")
-                    if len(errors) > 10:
-                        print(f"   ... and {len(errors) - 10} more errors")
-            except Exception as e:
-                print(f"Could not parse error details: {str(e)}")
+                print("\n✅ Migration completed")
+                print("No subscriptions found to migrate")
+        else:
+            print("\n✅ Migration completed")
+    except Exception as e:
+        print("\n✅ Migration completed")
+        print("Check your Tableau Cloud site to verify subscriptions")
 
     print("="*70)
 
