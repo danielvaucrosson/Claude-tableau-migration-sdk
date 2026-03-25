@@ -6,6 +6,8 @@ Usage:
     python view_retrieval.py --project "My Project"
     python view_retrieval.py --workbook "My Workbook"
     python view_retrieval.py --output views.csv
+    python view_retrieval.py --images ./images
+    python view_retrieval.py --workbook "Sales Dashboard" --images ./images
 
 Requires:
     pip install tableauserverclient
@@ -13,16 +15,17 @@ Requires:
 
 import csv
 import argparse
+from pathlib import Path
 
 import tableauserverclient as TSC
 
 
-# ── Credentials ───────────────────────────────────────────────────────────────
+# -- Credentials ---------------------------------------------------------------
 SERVER_URL = "https://your-tableau-server.com"
 SITE_CONTENT_URL = ""                # leave empty string for Default site
 ACCESS_TOKEN_NAME = "your-token-name"
 ACCESS_TOKEN = "your-token-secret"
-# ──────────────────────────────────────────────────────────────────────────────
+# ------------------------------------------------------------------------------
 
 
 def connect() -> TSC.Server:
@@ -42,17 +45,6 @@ def get_all_views(
     project_name: str = None,
     workbook_name: str = None,
 ) -> list[dict]:
-    """
-    Retrieve views from the server, with optional filters.
-
-    Args:
-        server:        Authenticated TSC Server object.
-        project_name:  If set, only return views in this project.
-        workbook_name: If set, only return views in this workbook.
-
-    Returns:
-        List of dicts with view metadata.
-    """
     req_options = TSC.RequestOptions(pagesize=1000)
     all_views, _ = server.views.get(req_options)
 
@@ -67,6 +59,7 @@ def get_all_views(
             'project_name': view.project_name if hasattr(view, 'project_name') else '',
             'created_at': str(view.created_at) if view.created_at else '',
             'updated_at': str(view.updated_at) if view.updated_at else '',
+            '_view_item': view,  # keep reference for image download
         }
 
         if project_name and row['project_name'] != project_name:
@@ -83,6 +76,28 @@ def get_all_views(
         results = [r for r in results if r['workbook_id'] in matching_wb_ids]
 
     return results
+
+
+def download_images(server: TSC.Server, views: list[dict], output_dir: str) -> None:
+    """
+    Download a PNG image for each view and save to output_dir.
+    Files are named <view_name>.png (special characters replaced with underscores).
+    """
+    out = Path(output_dir)
+    out.mkdir(parents=True, exist_ok=True)
+
+    image_req = TSC.ImageRequestOptions(imageresolution=TSC.ImageRequestOptions.Resolution.High)
+
+    for v in views:
+        view_item = v['_view_item']
+        try:
+            server.views.populate_image(view_item, image_req)
+            safe_name = "".join(c if c.isalnum() or c in (' ', '-') else '_' for c in v['name']).strip()
+            file_path = out / f"{safe_name}.png"
+            file_path.write_bytes(view_item.image)
+            print(f"  Saved: {file_path}")
+        except Exception as e:
+            print(f"  Failed to download image for '{v['name']}': {e}")
 
 
 def print_views(views: list[dict]) -> None:
@@ -102,10 +117,11 @@ def save_to_csv(views: list[dict], output_path: str) -> None:
         print("Nothing to write.")
         return
 
+    csv_fields = [k for k in views[0].keys() if k != '_view_item']
     with open(output_path, 'w', newline='', encoding='utf-8') as f:
-        writer = csv.DictWriter(f, fieldnames=views[0].keys())
+        writer = csv.DictWriter(f, fieldnames=csv_fields)
         writer.writeheader()
-        writer.writerows(views)
+        writer.writerows({k: v[k] for k in csv_fields} for v in views)
 
     print(f"Saved {len(views)} view(s) to {output_path}")
 
@@ -114,7 +130,8 @@ def main():
     parser = argparse.ArgumentParser(description='Retrieve views from Tableau Server')
     parser.add_argument('--project', default=None, help='Filter by project name')
     parser.add_argument('--workbook', default=None, help='Filter by workbook name')
-    parser.add_argument('--output', default=None, help='Save results to CSV file')
+    parser.add_argument('--output', default=None, help='Save metadata to CSV file')
+    parser.add_argument('--images', default=None, metavar='DIR', help='Download view images as PNGs to this directory')
     args = parser.parse_args()
 
     print(f"Connecting to {SERVER_URL} ...")
@@ -122,8 +139,13 @@ def main():
     try:
         views = get_all_views(server, project_name=args.project, workbook_name=args.workbook)
         print_views(views)
+
         if args.output:
             save_to_csv(views, args.output)
+
+        if args.images:
+            print(f"\nDownloading images to '{args.images}' ...")
+            download_images(server, views, args.images)
     finally:
         server.auth.sign_out()
         print("\nSigned out.")
