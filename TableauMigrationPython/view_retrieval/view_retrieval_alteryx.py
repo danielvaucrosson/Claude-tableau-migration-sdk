@@ -1,17 +1,17 @@
 """
 View Retrieval using Tableau Server Client (TSC)
+Designed to run inside the Alteryx Python Tool.
 
-Usage:
-    python view_retrieval.py
-    python view_retrieval.py --output views.csv
+Outputs a DataFrame with view names and PNG file paths to Alteryx anchor #1.
 
-Requires:
-    pip install tableauserverclient
+Setup (run once in a Python Tool cell before using this script):
+    from ayx import Package
+    Package.installPackages('tableauserverclient')
 """
 
-import csv
-import argparse
+import pandas as pd
 from pathlib import Path
+from ayx import Alteryx
 
 import tableauserverclient as TSC
 
@@ -40,7 +40,6 @@ def connect() -> TSC.Server:
 
 
 def get_workbook(server: TSC.Server) -> TSC.WorkbookItem:
-    """Find the target workbook by name. Raises if not found."""
     req = TSC.RequestOptions(pagesize=1000)
     req.filter.add(TSC.Filter(
         TSC.RequestOptions.Field.Name,
@@ -77,47 +76,29 @@ def download_images(server: TSC.Server, views: list) -> list[dict]:
         try:
             server.views.populate_image(view, image_req)
             file_path.write_bytes(view.image)
-            print(f"  Saved: {file_path}")
-            rows.append({'view_name': view.name, 'file_path': str(file_path), 'status': 'success'})
+            rows.append({
+                'view_name': view.name,
+                'file_path': str(file_path),
+                'status': 'success',
+            })
         except Exception as e:
-            print(f"  Failed: '{view.name}': {e}")
-            rows.append({'view_name': view.name, 'file_path': str(file_path), 'status': f'error: {e}'})
+            rows.append({
+                'view_name': view.name,
+                'file_path': str(file_path),
+                'status': f'error: {e}',
+            })
 
     return rows
 
 
-def save_to_csv(rows: list[dict], output_path: str) -> None:
-    with open(output_path, 'w', newline='', encoding='utf-8') as f:
-        writer = csv.DictWriter(f, fieldnames=rows[0].keys())
-        writer.writeheader()
-        writer.writerows(rows)
-    print(f"Saved metadata to {output_path}")
+# -- Main ----------------------------------------------------------------------
+server = connect()
+try:
+    workbook = get_workbook(server)
+    views = get_views(server, workbook)
+    rows = download_images(server, views)
+finally:
+    server.auth.sign_out()
 
-
-def main():
-    parser = argparse.ArgumentParser(description='Retrieve views from a Tableau workbook')
-    parser.add_argument('--output', default=None, help='Save view metadata to CSV file')
-    args = parser.parse_args()
-
-    print(f"Connecting to {SERVER_URL} ...")
-    server = connect()
-    try:
-        print(f"Looking for workbook '{WORKBOOK_NAME}' ...")
-        workbook = get_workbook(server)
-        print(f"Found: {workbook.name} ({len(workbook.views) if workbook.views else '?'} views)")
-
-        views = get_views(server, workbook)
-        print(f"Found {len(views)} view(s): {[v.name for v in views]}")
-
-        print(f"\nDownloading images to '{IMAGE_OUTPUT_DIR}' ...")
-        rows = download_images(server, views)
-
-        if args.output:
-            save_to_csv(rows, args.output)
-    finally:
-        server.auth.sign_out()
-        print("\nSigned out.")
-
-
-if __name__ == '__main__':
-    main()
+df = pd.DataFrame(rows)
+Alteryx.write(df, 1)
