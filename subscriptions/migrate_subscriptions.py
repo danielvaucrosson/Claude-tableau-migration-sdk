@@ -170,9 +170,6 @@ class SkipWorkbooks(ContentFilterBase[IWorkbook]):
 class SkipDataSources(ContentFilterBase[IDataSource]):
     def should_migrate(self, item): return False
 
-class SkipExtractRefreshTasks(ContentFilterBase[IServerExtractRefreshTask]):
-    def should_migrate(self, item): return False
-
 class SkipCustomViews(ContentFilterBase[ICustomView]):
     def should_migrate(self, item): return False
 
@@ -249,7 +246,10 @@ def migrate_subscriptions() -> None:
             access_token=dest["access_token"],
         )
         .for_server_to_cloud()
-        .with_tableau_id_authentication_type()
+        .with_saml_authentication_type(
+            domain="llbean.com",
+            idp_configuration_name="LLB_PRPROD_SAML",
+        )
         .with_tableau_cloud_usernames(user_mapping.map)
     )
 
@@ -260,10 +260,14 @@ def migrate_subscriptions() -> None:
         SkipProjects,
         SkipWorkbooks,
         SkipDataSources,
-        SkipExtractRefreshTasks,
         SkipCustomViews,
     ):
         plan_builder.filters.add(filter_cls)
+
+    # Use skip_content_type (not a filter) so the SDK never calls the Server
+    # extract refresh tasks API — avoids TableauInstanceTypeNotSupportedException
+    # on servers where instance type resolves as Unknown.
+    plan_builder.skip_content_type(IServerExtractRefreshTask, pre_cache=False)
 
     # Optional: only migrate subscriptions matching the configured scope
     plan_builder.filters.add(SubscriptionScopeFilter)
