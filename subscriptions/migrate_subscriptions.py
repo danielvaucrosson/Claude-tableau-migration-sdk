@@ -130,7 +130,7 @@ class SubscriptionUserMapping(TableauCloudUsernameMappingBase):
             )
             return {}
         mappings: dict = {}
-        with open(csv_path, encoding="utf-8") as f:
+        with open(csv_path, encoding="utf-8-sig") as f:
             for row in csv.DictReader(f):
                 username = row.get("ServerUsername", "").strip()
                 email    = row.get("CloudEmail", "").strip()
