@@ -1,17 +1,12 @@
 # Tableau Migration SDK - Python
+# Requires Python 3.10 or higher (Python 3.9 deprecated in SDK v6.0)
 # Install with: pip install -r requirements.txt
 
-# Core Tableau Migration SDK
-tableau-migration
+# Core Tableau Migration SDK - pinned to v6.x to avoid pythonnet version conflicts
+tableau-migration>=6.0.0,<7.0.0
 
-# Tableau REST API Client - for user verification
+# Tableau REST API Client - for Cloud user verification
 tableauserverclient>=0.25
 
 # Credential Management
 python-dotenv>=1.0.0
-
-# Python's built-in csv module is used for CSV parsing (no extra deps needed)
-
-# Optional: For enhanced CSV handling with pandas
-# Uncomment if you want to use pandas for complex CSV operations
-# pandas>=2.0.0
