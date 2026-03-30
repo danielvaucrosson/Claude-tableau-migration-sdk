@@ -42,6 +42,10 @@ from tableau_migration import (
     IServerExtractRefreshTask,
     ICustomView,
 )
+from tableau_migration.migration_engine_hooks_initializemigration import PyInitializeMigrationHookResult
+from Tableau.Migration.Api import IServerSessionProvider
+from Tableau.Migration import TableauInstanceType
+from System.Threading import CancellationToken
 
 # -- Scope filter (edit these to limit which subscriptions are migrated) --------
 # Substring match against the subscription's content location path.
@@ -200,6 +204,32 @@ class SubscriptionScopeFilter(ContentFilterBase[IServerSubscription]):
             return True   # migrate if we cannot inspect the item
 
 
+# -- Instance type fix ----------------------------------------------------------
+# Some Tableau Server configurations cause the SDK's serverinfo detection to
+# return Unknown instead of TableauServer, which blocks server-specific APIs
+# like get_ServerSubscriptions().  This hook runs after sign-in and forces
+# the instance type to Server for any session provider that resolved as Unknown.
+
+def _fix_unknown_instance_type(ctx: PyInitializeMigrationHookResult) -> PyInitializeMigrationHookResult:
+    try:
+        provider = ctx.scoped_services._get_service(IServerSessionProvider)
+        if provider is not None and "Unknown" in str(provider.InstanceType):
+            ct = getattr(CancellationToken, "None")
+            task = provider.SetCurrentSessionAsync(
+                provider.UserId,
+                provider.SiteId,
+                provider.SiteContentUrl,
+                provider.SiteContentUrl,
+                TableauInstanceType.Server,
+                ct,
+            )
+            task.GetAwaiter().GetResult()
+            print("  Fixed source instance type: Unknown -> Server")
+    except Exception as e:
+        print(f"  Note: Instance type hook: {e}")
+    return ctx
+
+
 # -- Migration ------------------------------------------------------------------
 
 def migrate_subscriptions() -> None:
@@ -268,6 +298,9 @@ def migrate_subscriptions() -> None:
     # extract refresh tasks API — avoids TableauInstanceTypeNotSupportedException
     # on servers where instance type resolves as Unknown.
     plan_builder.skip_content_type(IServerExtractRefreshTask, pre_cache=False)
+
+    # Hook to fix Unknown instance type after sign-in (LLB server workaround)
+    plan_builder.hooks.add(PyInitializeMigrationHookResult, _fix_unknown_instance_type)
 
     # Optional: only migrate subscriptions matching the configured scope
     plan_builder.filters.add(SubscriptionScopeFilter)
