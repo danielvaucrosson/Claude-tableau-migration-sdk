@@ -45,7 +45,6 @@ from tableau_migration import (
 from tableau_migration.migration_engine_hooks_initializemigration import PyInitializeMigrationHookResult
 from Tableau.Migration.Api import IServerSessionProvider
 from Tableau.Migration import TableauInstanceType
-from System.Threading import CancellationToken
 
 # -- Scope filter (edit these to limit which subscriptions are migrated) --------
 # Substring match against the subscription's content location path.
@@ -214,16 +213,7 @@ def _fix_unknown_instance_type(ctx: PyInitializeMigrationHookResult) -> PyInitia
     try:
         provider = ctx.scoped_services._get_service(IServerSessionProvider)
         if provider is not None and "Unknown" in str(provider.InstanceType):
-            ct = getattr(CancellationToken, "None")
-            task = provider.SetCurrentSessionAsync(
-                provider.UserId,
-                provider.SiteId,
-                provider.SiteContentUrl,
-                provider.SiteContentUrl,
-                TableauInstanceType.Server,
-                ct,
-            )
-            task.GetAwaiter().GetResult()
+            provider.InstanceType = TableauInstanceType.Server
             print("  Fixed source instance type: Unknown -> Server")
     except Exception as e:
         print(f"  Note: Instance type hook: {e}")
