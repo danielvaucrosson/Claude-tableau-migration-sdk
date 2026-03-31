@@ -45,6 +45,7 @@ from tableau_migration import (
 from tableau_migration.migration_engine_hooks_initializemigration import PyInitializeMigrationHookResult
 from Tableau.Migration.Api import IServerSessionProvider
 from Tableau.Migration import TableauInstanceType
+from System.Reflection import BindingFlags
 
 # -- Scope filter (edit these to limit which subscriptions are migrated) --------
 # Substring match against the subscription's content location path.
@@ -213,7 +214,14 @@ def _fix_unknown_instance_type(ctx: PyInitializeMigrationHookResult) -> PyInitia
     try:
         provider = ctx.scoped_services._get_service(IServerSessionProvider)
         if provider is not None and "Unknown" in str(provider.InstanceType):
-            provider.InstanceType = TableauInstanceType.Server
+            # pythonnet sees the IServerSessionProvider interface (read-only),
+            # but the concrete ServerSessionProvider has a public setter.
+            # Use .NET reflection to call it on the actual runtime type.
+            prop = provider.GetType().GetProperty(
+                "InstanceType",
+                BindingFlags.Instance | BindingFlags.Public,
+            )
+            prop.SetValue(provider, TableauInstanceType.Server)
             print("  Fixed source instance type: Unknown -> Server")
     except Exception as e:
         print(f"  Note: Instance type hook: {e}")
