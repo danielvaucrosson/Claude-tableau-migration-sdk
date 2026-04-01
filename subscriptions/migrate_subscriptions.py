@@ -44,6 +44,7 @@ from tableau_migration import (
 )
 from tableau_migration.migration_engine_hooks_initializemigration import PyInitializeMigrationHookResult
 from Tableau.Migration.Api import IServerSessionProvider
+from Tableau.Migration.Engine.Endpoints import ISourceEndpoint
 from Tableau.Migration import TableauInstanceType
 from System.Reflection import BindingFlags
 
@@ -211,20 +212,63 @@ class SubscriptionScopeFilter(ContentFilterBase[IServerSubscription]):
 # the instance type to Server for any session provider that resolved as Unknown.
 
 def _fix_unknown_instance_type(ctx: PyInitializeMigrationHookResult) -> PyInitializeMigrationHookResult:
+    """
+    The SDK creates separate DI scopes for source and destination endpoints.
+    Each scope has its own IServerSessionProvider.  We must reach into the
+    SOURCE endpoint's scope and fix its provider — not the migration scope's.
+    """
+    fixed = 0
+
+    def _fix_provider(provider, label):
+        nonlocal fixed
+        if provider is None or "Unknown" not in str(provider.InstanceType):
+            return
+        prop = provider.GetType().GetProperty(
+            "InstanceType",
+            BindingFlags.Instance | BindingFlags.Public,
+        )
+        prop.SetValue(provider, TableauInstanceType.Server)
+        fixed += 1
+        print(f"  Fixed {label} instance type: Unknown -> Server")
+
     try:
-        provider = ctx.scoped_services._get_service(IServerSessionProvider)
-        if provider is not None and "Unknown" in str(provider.InstanceType):
-            # pythonnet sees the IServerSessionProvider interface (read-only),
-            # but the concrete ServerSessionProvider has a public setter.
-            # Use .NET reflection to call it on the actual runtime type.
-            prop = provider.GetType().GetProperty(
-                "InstanceType",
-                BindingFlags.Instance | BindingFlags.Public,
-            )
-            prop.SetValue(provider, TableauInstanceType.Server)
-            print("  Fixed source instance type: Unknown -> Server")
+        # 1. Fix the migration scope's provider (may not be the one that matters)
+        migration_provider = ctx.scoped_services._get_service(IServerSessionProvider)
+        _fix_provider(migration_provider, "migration-scope")
+
+        # 2. Fix the source endpoint's provider (this is the one SitesApiClient uses)
+        source_endpoint = ctx.scoped_services._get_service(ISourceEndpoint)
+        if source_endpoint is not None:
+            # Walk the type hierarchy to find the EndpointScope field
+            t = source_endpoint.GetType()
+            scope_field = None
+            while t is not None and scope_field is None:
+                scope_field = t.GetField(
+                    "EndpointScope",
+                    BindingFlags.Instance | BindingFlags.NonPublic | BindingFlags.Public,
+                )
+                t = t.BaseType
+
+            if scope_field is not None:
+                endpoint_scope = scope_field.GetValue(source_endpoint)
+                if endpoint_scope is not None:
+                    import clr
+                    sp = endpoint_scope.ServiceProvider
+                    src_provider = sp.GetService(clr.GetClrType(IServerSessionProvider))
+                    _fix_provider(src_provider, "source-endpoint")
+                else:
+                    print("  Note: EndpointScope is null")
+            else:
+                print("  Note: EndpointScope field not found")
+        else:
+            print("  Note: ISourceEndpoint not available in scoped services")
+
     except Exception as e:
         print(f"  Note: Instance type hook: {e}")
+
+    if fixed == 0:
+        print("  Warning: No providers needed fixing — Unknown may persist")
+
     return ctx
 
 
