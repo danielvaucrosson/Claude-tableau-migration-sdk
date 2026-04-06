@@ -90,6 +90,7 @@ def validate_config(cfg: dict) -> None:
     required = {
         "source":      ["server_url", "site_content_url", "access_token_name", "access_token"],
         "destination": ["pod_url", "site_content_url", "access_token_name", "access_token"],
+        "saml":        ["domain", "idp_configuration_name"],
     }
     missing = []
     for section, fields in required.items():
@@ -319,8 +320,8 @@ def migrate_subscriptions() -> None:
         )
         .for_server_to_cloud()
         .with_saml_authentication_type(
-            domain="llbean.com",
-            idp_configuration_name="LLB_PRPROD_SAML",
+            domain=cfg["saml"]["domain"],
+            idp_configuration_name=cfg["saml"]["idp_configuration_name"],
         )
         .with_tableau_cloud_usernames(user_mapping.map)
     )
