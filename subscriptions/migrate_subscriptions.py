@@ -157,11 +157,11 @@ class SubscriptionUserMapping(TableauCloudUsernameMappingBase):
 
 
 # -- Filters --------------------------------------------------------------------
-# Skip every content type except subscriptions. Users, groups, projects,
-# workbooks, and data sources were already migrated by content_migration.py.
-
-class SkipUsers(ContentFilterBase[IUser]):
-    def should_migrate(self, item): return False
+# Skip every content type except subscriptions and users.
+# Users must be processed (not skipped) so the SDK builds the internal
+# mapping table that OwnershipTransformer needs to resolve subscription
+# owners — especially in SAML SSO environments where source usernames
+# (domain\user) differ from Cloud emails.
 
 class SkipGroups(ContentFilterBase[IGroup]):
     def should_migrate(self, item): return False
@@ -325,13 +325,8 @@ def migrate_subscriptions() -> None:
         .with_tableau_cloud_usernames(user_mapping.map)
     )
 
-    # Skip all content types except subscriptions and users.
-    # Users must NOT be skipped — the SDK needs to process them so the
-    # OwnershipTransformer can resolve subscription owners to Cloud users.
-    # Already-existing Cloud users will be matched, not duplicated.
-    # This is critical for SAML SSO environments where source usernames
-    # (domain\user) differ from Cloud emails — without user processing,
-    # the mapping callback never fires and ownership resolution fails.
+    # Skip content types already migrated — see filter definitions above
+    # for why users are intentionally NOT skipped.
     for filter_cls in (
         SkipGroups,
         SkipProjects,
