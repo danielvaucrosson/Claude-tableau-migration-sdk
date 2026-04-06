@@ -325,9 +325,14 @@ def migrate_subscriptions() -> None:
         .with_tableau_cloud_usernames(user_mapping.map)
     )
 
-    # Skip all content types except subscriptions
+    # Skip all content types except subscriptions and users.
+    # Users must NOT be skipped — the SDK needs to process them so the
+    # OwnershipTransformer can resolve subscription owners to Cloud users.
+    # Already-existing Cloud users will be matched, not duplicated.
+    # This is critical for SAML SSO environments where source usernames
+    # (domain\user) differ from Cloud emails — without user processing,
+    # the mapping callback never fires and ownership resolution fails.
     for filter_cls in (
-        SkipUsers,
         SkipGroups,
         SkipProjects,
         SkipWorkbooks,
